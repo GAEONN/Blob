@@ -1,0 +1,15 @@
+numpy>=2.0
+scipy>=1.14
+Pillow>=10.0
+moderngl>=5.12
+dxcam>=0.3
+psutil>=6.0
+pystray>=0.19
+sounddevice>=0.5
+pycaw>=20240210
+comtypes>=1.4
+uiautomation>=2.0
+winrt-Windows.Media.Control>=3.0
+winrt-Windows.Storage.Streams>=3.0
+winrt-Windows.Foundation>=3.0
+winrt-Windows.Foundation.Collections>=3.0
