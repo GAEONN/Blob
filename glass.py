@@ -289,7 +289,7 @@ void main() {
     vec2 pp = w - panel_pos;                         // panel-local px
     vec2 pc = panel_size * 0.5;
     float sdP = sdShape(pp, pc, pc, panel_r, 5.0);
-    float mask = clamp(0.5 - sdP, 0.0, 1.0);
+    float mask = clamp(0.5 - sdP / 1.3, 0.0, 1.0);
     float sdS = sdShape(pp - vec2(0.0, 8.0 * S), pc, pc, panel_r, 5.0);
     float shadow = 0.30 * (1.0 - smoothstep(-12.0 * S, 20.0 * S, sdS));
     if (mask <= 0.0) { frag = vec4(0.0, 0.0, 0.0, shadow); return; }
@@ -302,10 +302,10 @@ void main() {
 
     vec2 nP = nShape(pp, pc, pc, panel_r, 5.0);
     float depth = max(-sdP, 0.0);
-    float t = clamp(1.0 - depth / (28.0 * S), 0.0, 1.0) * step(sdP, 0.5);
+    float t = clamp(1.0 - depth / (28.0 * S), 0.0, 1.0) * clamp(0.5 - sdP, 0.0, 1.0);
     d += nP * (32.0 * S) * pow(t, 2.2);
     d += (pp - pc) * (0.975 - 1.0) * mask;
-    float r0 = exp(-depth / S) * step(sdP, 0.8);
+    float r0 = exp(-depth / S) * clamp(0.9 - sdP, 0.0, 1.0);
     rim += r0; face += r0 * dot(nP, light); glow += pow(t, 3.0) * 0.10;
 
     for (int i = 0; i < n_lens; i++) {
@@ -321,10 +321,10 @@ void main() {
                       lensSd(i, pp + vec2(0.0, 0.5)) - lensSd(i, pp - vec2(0.0, 0.5)));
         vec2 n = g / max(length(g), 1e-5);
         float dep = max(-sd, 0.0);
-        float tt = clamp(1.0 - dep / max(A.z, 1.0), 0.0, 1.0) * step(sd, 0.5);
+        float tt = clamp(1.0 - dep / max(A.z, 1.0), 0.0, 1.0) * clamp(0.5 - sd, 0.0, 1.0);
         d += n * A.y * pow(tt, 2.2);
         d += (pp - c) * (A.w - 1.0) * cov;
-        float rr = exp(-dep / S) * step(sd, 0.8) * B.x;
+        float rr = exp(-dep / S) * clamp(0.9 - sd, 0.0, 1.0) * B.x;
         rim += rr; face += rr * dot(n, light); glow += pow(tt, 3.0) * 0.10 * B.x;
         frost = max(frost, cov * B.y);
         lift = max(lift, cov * B.z);
@@ -344,9 +344,9 @@ void main() {
                           sdPointer(pp + vec2(0.0, 0.5)) - sdPointer(pp - vec2(0.0, 0.5)));
             vec2 n = g / max(length(g), 1e-5);
             float dep = max(-sd, 0.0);
-            float tt = clamp(1.0 - dep / (0.34 * ptr_size), 0.0, 1.0) * step(sd, 0.5);
+            float tt = clamp(1.0 - dep / (0.34 * ptr_size), 0.0, 1.0) * clamp(0.5 - sd, 0.0, 1.0);
             d += n * (0.55 * ptr_size) * pow(tt, 1.8) * ptr_alpha;
-            float rr = exp(-dep / S) * step(sd, 0.8) * ptr_alpha;
+            float rr = exp(-dep / S) * clamp(0.9 - sd, 0.0, 1.0) * ptr_alpha;
             rim += rr; face += rr * dot(n, light); glow += pow(tt, 3.0) * 0.12 * ptr_alpha;
             frost = max(frost, 0.3 * cov);
             lift = max(lift, 0.34 * cov);
