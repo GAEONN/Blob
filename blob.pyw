@@ -323,9 +323,9 @@ class Panel:
 
     def __init__(self, S):
         self.S = S * self.SS      # every layout number below is in supersampled pixels
-        self.f = Fonts(S)
+        self.f = Fonts(self.S)    # fonts scale with the supersampled layout too
         self.compact = False
-        self.w = round(self.WIDE * S)
+        self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
         self.query = ""
