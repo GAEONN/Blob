@@ -319,6 +319,7 @@ class Panel:
     TOP = 56    # room taken by the tab bar (which sits at the bottom)
     CONTENT = 18  # content starts this far below the top edge
     WIDE, NARROW = 340, 248
+    RADIUS = 34     # the pane's corner; anything inset by p gets RADIUS - p (concentric radii)
     SS = 2          # content is drawn at 2x and filtered down on the GPU
 
     def __init__(self, S):
@@ -360,6 +361,15 @@ class Panel:
     @property
     def pad_u(self):
         return 14 if self.compact else 22
+
+    @property
+    def radius(self):
+        return self.RADIUS * self.S
+
+    def inner_radius(self, inset, cap=None):
+        """Nested corners: outer radius = inner radius + padding."""
+        r = max(2 * self.S, self.radius - inset)
+        return min(r, cap) if cap else r
 
     def max_height(self):
         return round((self.TOP + 300 + 16 * 24) * self.S)
@@ -571,7 +581,7 @@ class Panel:
         L = self.label
         a = round(W - 2 * pad)
         ax, ay = round(pad), round(px(2))
-        self._artwork(m, ax, ay, a, a * 0.115, 44)
+        self._artwork(m, ax, ay, a, self.inner_radius(pad), 44)
         ty = ay + a + 18 * S
         tw = W - 2 * pad - 80 * S
         if m and m.active:
@@ -605,7 +615,7 @@ class Panel:
         px = lambda v: top + v * S
         L = self.label
         a = round(54 * S)
-        self._artwork(m, round(pad), round(px(2)), a, a * 0.2, 20)
+        self._artwork(m, round(pad), round(px(2)), a, self.inner_radius(pad, a / 2), 20)
         tx = pad + a + 12 * S
         tw = W - pad - tx - 58 * S      # leave room for the search / queue buttons
         if m and m.active:
@@ -633,7 +643,7 @@ class Panel:
         """Just the artwork, Apple Music style. Click it again to go back."""
         S, W = self.S, self.w
         a = round(W - 2 * pad)
-        self._artwork(m, round(pad), round(top), a, a * 0.115, 60)
+        self._artwork(m, round(pad), round(top), a, self.inner_radius(pad), 60)
         self._progress(m, None, pad, W - pad, top + a + 22 * S, times=False)
 
     def _artwork(self, m, ax, ay, a, radius, glyph_size):
@@ -725,7 +735,7 @@ class Panel:
             th = round((36 if self.compact else 40) * S)
             if r.get("art") is not None:
                 img = r["art"].resize((th, th), Image.LANCZOS).convert("RGBA")
-                img.putalpha(Image.fromarray((glass.shape_mask(th, th, th * 0.22) * 255).astype(np.uint8)))
+                img.putalpha(Image.fromarray((glass.shape_mask(th, th, self.inner_radius(pad, th / 2)) * 255).astype(np.uint8)))
                 self.pic.alpha_composite(img, (round(pad), round(y + 3 * S)))
             elif r.get("kind") == "playlist":
                 self.di.text((pad + th / 2, y + 3 * S + th / 2), "\uE8FD", font=self.f.icon(12), fill=170,
@@ -758,11 +768,11 @@ class Panel:
             th = round((26 if self.compact else 32) * S)
             if q.get("art") is not None:
                 img = q["art"].resize((th, th), Image.LANCZOS).convert("RGBA")
-                img.putalpha(Image.fromarray((glass.shape_mask(th, th, th * 0.22) * 255).astype(np.uint8)))
+                img.putalpha(Image.fromarray((glass.shape_mask(th, th, self.inner_radius(pad, th / 2)) * 255).astype(np.uint8)))
                 self.pic.alpha_composite(img, (round(pad), round(y + 3 * S)))
             else:
-                self.static((pad, y + 3 * S, pad + th, y + 3 * S + th), th * 0.22, frost=1.0, lift=0.08,
-                            n=5.0)
+                self.static((pad, y + 3 * S, pad + th, y + 3 * S + th), self.inner_radius(pad, th / 2),
+                            frost=1.0, lift=0.08, n=5.0)
             tx = pad + th + 10 * S
             tw = W - pad - tx - 8 * S
             L(tx, y + (5 if self.compact else 3) * S, self.fit(q["title"], 13, "Semibold Text", tw), 13,
