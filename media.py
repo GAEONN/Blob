@@ -46,8 +46,10 @@ class NowPlaying:
         return max(0.0, min(p, self.duration or p))
 
     def toggle(self):
-        self.playing = not self.playing  # optimistic; the next poll confirms
+        # Snapshot using the OLD playback state: otherwise pause loses elapsed time,
+        # and resume incorrectly includes all the time spent paused.
         self.position, self.stamp = self.pos_now(), time.time()
+        self.playing = not self.playing  # optimistic; the next poll confirms
         self.cmds.put("toggle")
 
     def next(self):
@@ -105,7 +107,11 @@ class NowPlaying:
         s = self._pick(mgr)
         if s is None:
             self.active = self.playing = False
-            self.title = self.artist = self.album = ""
+            self.can_seek = False
+            self.position = self.duration = 0.0
+            self.title = self.artist = self.album = self.source = ""
+            if self.art is not None:
+                self.art_version += 1
             self.art, self._key = None, None
             return
         self.active = True

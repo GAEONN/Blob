@@ -120,6 +120,67 @@ by briefly dropping that exclusion. Screen recorders still won't see the pane.
 Written for one laptop (an ASUS TUF A14) and generalised where it was cheap to do so. Sensor IDs,
 fan profiles and the Apple Music automation are the parts most likely to need adjusting elsewhere.
 
+## Gaming strip and Playing Next
+
+Choose **Gaming** in Blob's view switcher for a draggable, always-on-top glass strip:
+FPS, frame time, CPU/GPU temperatures and utilization, RAM, fan RPM, and GPU power.
+Gaming opens **locked and click-through**: mouse clicks go to the game, not Blob.
+Press **Ctrl+Alt+G** to unlock/relock, or right-click Blob's tray icon and choose
+**Unlock gaming strip / Lock gaming strip** (also available if another app owns the shortcut).
+Unlocking expands navigation; drag a gap to reposition, then lock before playing.
+Reopening Gaming locks it again. The overlay never requests foreground focus in Gaming.
+This uses Windows' [layered-window input transparency](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows),
+not just a no-activation mouse handler. Use windowed or borderless
+games; an ordinary desktop overlay cannot promise visibility in exclusive fullscreen.
+When a focused game moves above Blob in the topmost window group, Gaming restores
+its position without activation (checked once per second, not every rendered frame).
+For Fortnite, use **Settings > Video > Display > Window Mode > Windowed Fullscreen**
+if Fullscreen hides desktop overlays. Blob does not inject into the game or modify
+anti-cheat or the game's display settings.
+
+FPS/frame time use actual application presentation intervals from the foreground
+process, averaged over a rolling second. They are not monitor refresh rate, display
+FPS, input latency, or frame-generation-inclusive FPS. When Blob has focus it retains
+the last external foreground process. Missing/stale frame data is shown as a dash.
+Hardware measurements retain Blob's existing sensor support and limitations.
+
+The optional FPS helper is the official [PresentMon console application](https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md).
+Install the pinned, SHA-256-verified portable binary without an installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/setup_presentmon.ps1
+```
+
+Alternatively set `BLOB_PRESENTMON` to a compatible PresentMon console executable.
+This checkout's helper is installed locally but excluded from Git; other installations
+need the setup step. No service, game injection, or privilege change is performed.
+Some accounts need [Windows Performance Log Users permission](https://github.com/GameTechDev/PresentMon#user-access-denied);
+Blob reports the problem instead of silently elevating. Frame capture stops when
+Gaming is hidden or closed. Gaming limits glass refresh to approximately 60 Hz,
+updates frame statistics twice a second, and avoids shading the unused window area.
+
+Playing Next preserves its cached rows during refreshes, refreshes after track changes,
+coalesces repeated requests, and loads artwork separately. Its reader targets Apple
+Music's actual queue, excluding sidebar playlists. The initial read still depends on
+Apple Music's UI responsiveness; covers also depend on the catalog/network.
+
+## Development checks
+
+Run offline regression tests on Windows with the dependencies installed:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+These check regular/compact layouts at 100–200% scaling, settings and sensor-list scrolling,
+player hit targets, playback timing, mask coverage, and capture-buffer reuse. They do not
+change audio routing or poll hardware. To render a contact sheet using the real GPU glass
+shader over a synthetic background:
+
+```powershell
+python tests/render_preview.py --output audit.tmp.png
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

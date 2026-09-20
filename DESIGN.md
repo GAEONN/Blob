@@ -199,3 +199,31 @@ Set `BLOB_DUMP=<path>.png` to have every rendered frame written out composited o
 background, and `BLOB_PROFILE=1` to log per-frame timings (capture / GPU+readback /
 UpdateLayeredWindow / content redraw). Drive the UI by posting `WM_MOUSEMOVE` / `WM_LBUTTONDOWN` to
 the window to capture animation states without touching the mouse.
+
+## Components
+
+### Gaming strip and Playing Next extension
+
+This addition describes the native extension in `blob.pyw`, `gaming.py` and
+`applemusic.py`; the incumbent brief and design tokens remain unchanged.
+
+**Slim-strip rule.** Gaming rests at 624 × 86 DIP (560 DIP wide in Compact), with
+six aligned groups: FPS/frame time, CPU temperature/load, GPU temperature/load,
+RAM percentage/used memory, fan RPM and GPU power/power-source hint. The left menu
+reveals the existing spring-animated switcher, adding 56 DIP of height. Dragging
+and clicking the strip preserve foreground focus. It reuses refractive glass,
+continuous corners, adaptive ink and the existing warm temperature warnings.
+
+**Unknown-stays-unknown rule.** Unavailable metrics use dashes or explicit sensor
+and setup hints. FPS/frame time describe application presentation intervals, not
+refresh rate, display FPS or input latency. Gaming refreshes its text every half
+second and stops frame capture when hidden; gameplay validation is not claimed.
+
+**Cached-queue rule.** Playing Next retains its rows while a refresh is pending;
+loading, empty and refresh-failure messages remain distinct. The reader targets
+Apple Music's queue rather than sidebar playlists. Repeated requests coalesce;
+track changes detected on Music force a refresh. Covers arrive independently and
+update matching title/artist identities. Rows retain existing hover glass,
+ellipsized text and optional covers: 42 DIP regular rows include artist captions,
+while 34 DIP Compact rows show titles only. Selecting a row targets its title and
+artist in Apple Music rather than relying on a stale queue index.

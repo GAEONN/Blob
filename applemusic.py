@@ -22,6 +22,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
@@ -29,6 +30,8 @@ import engine as core
 
 AUMID = "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App"
 u32 = ctypes.windll.user32
+u32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+u32.FindWindowW.restype = ctypes.c_void_p
 u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
 u32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
 u32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
@@ -54,6 +57,15 @@ class AppleMusic:
         self.shuffle = False
         self.repeat = "off"        # off | all | one
         self._art_cache = {}       # (title, artist) -> PIL image
+        self._art_lock = threading.Lock()
+        self._art_pending = set()
+        self._art_pool = ThreadPoolExecutor(4, thread_name_prefix="BlobArtwork")
+        self._queue_lock = threading.Lock()
+        self._queue_pending = False
+        self.queue_loading = False
+        self.queue_status = ""
+        self.queue_action_status = ""
+        self._queue_stamp = 0.0
         self.status = ""           # short message for the UI ("Searching…")
         self.version = 0           # bumps whenever results / playlists / status change
         self.country = store_country()
@@ -91,7 +103,14 @@ class AppleMusic:
     def refresh_playlists(self):
         self.jobs.put(("playlists", None))
 
-    def refresh_queue(self):
+    def refresh_queue(self, force=False):
+        # Keep the cached list visible, and never stack repeated UIA traversals.
+        with self._queue_lock:
+            if self._queue_pending or (not force and time.monotonic() - self._queue_stamp < 8):
+                return
+            self._queue_pending = self.queue_loading = True
+        self.queue_status = "Updating Playing Next…" if self.queue else "Loading Playing Next…"
+        self.version += 1
         self.jobs.put(("queue", None))
 
     def toggle_shuffle(self):
@@ -106,8 +125,10 @@ class AppleMusic:
 
     def play_queue(self, i):
         if 0 <= i < len(self.queue):
-            self._set_status(f"Playing \u201c{self.queue[i]['title']}\u201d\u2026")
-            self.jobs.put(("play_queue", i))
+            item = self.queue[i]
+            self.queue_action_status = f"Playing \u201c{item['title']}\u201d\u2026"
+            self._set_status(self.queue_action_status)
+            self.jobs.put(("play_queue", (item["title"], item["artist"])))
 
     def _set_status(self, s):
         self.status = s
@@ -142,12 +163,24 @@ class AppleMusic:
                         self._transport_toggle(job)
                     elif job == "play_queue":
                         self._play_queue(arg)
+                        self.queue_action_status = ""
                         self._set_status("")
                 except Exception as e:
                     core.log(f"applemusic {job}: {e!r}")
                     self.page_url = None
-                    if job != "prefetch":
+                    if job == "queue":
+                        self.queue_status = "Couldn't refresh. Open Apple Music and try again."
+                    elif job == "play_queue":
+                        self.queue_action_status = "Couldn't play. Try again."
+                        self._set_status(self.queue_action_status)
+                    elif job != "prefetch":
                         self._set_status("Apple Music didn't respond. Try again.")
+                finally:
+                    if job == "queue":
+                        with self._queue_lock:
+                            self._queue_pending = self.queue_loading = False
+                            self._queue_stamp = time.monotonic()
+                        self.version += 1
 
     def _search(self, term):
         q = urllib.parse.urlencode({"term": term, "entity": "song", "limit": 12, "country": self.country})
@@ -168,6 +201,10 @@ class AppleMusic:
         songs = [{"title": t.get("trackName", ""), "artist": t.get("artistName", ""),
                   "album": t.get("collectionName", ""), "url": t["trackViewUrl"], "art": a, "kind": "song"}
                  for t, a in zip(tracks, arts)]
+        with self._art_lock:
+            for song in songs:
+                if song["art"] is not None:
+                    self._art_cache[(song["title"], song["artist"])] = song["art"]
         low = term.lower()
         mine = [{"title": n, "artist": "Your playlist", "album": "", "url": None, "art": None,
                  "kind": "playlist"} for n in self.playlists if low in n.lower()][:4]
@@ -176,6 +213,9 @@ class AppleMusic:
 
     # ── the Apple Music window ──
     def _window(self, launch=True):
+        handle = u32.FindWindowW(None, "Apple Music")
+        if handle:
+            return self.auto.ControlFromHandle(handle)
         w = self.auto.WindowControl(searchDepth=1, Name="Apple Music")
         if w.Exists(0.2):
             return w
@@ -286,17 +326,13 @@ class AppleMusic:
                 raise RuntimeError("couldn't find the song")
 
     def _sidebar_playlists(self, w):
-        items = []
-
-        def walk(c, d=0):
-            if d > 14:
-                return
-            for ch in c.GetChildren():
-                if ch.ControlTypeName == "ListItemControl" and ch.AutomationId.startswith("DBID"):
-                    items.append(ch)
-                walk(ch, d + 1)
-        walk(w)
-        return items
+        from uiautomation.uiautomation import _AutomationClient
+        client = _AutomationClient.instance().IUIAutomation
+        cache = client.CreateCacheRequest()
+        cache.AddProperty(30011)  # AutomationId
+        found = w.Element.FindAllBuildCache(4, client.CreatePropertyCondition(30003, 50007), cache)
+        return [self.auto.Control.CreateControlFromElement(e) for i in range(found.Length)
+                if (e := found.GetElement(i)).GetCachedPropertyValue(30011).startswith("DBID")]
 
     def _read_playlists(self):
         w = self._window(launch=False)
@@ -310,64 +346,103 @@ class AppleMusic:
         self.playlists = names
         self.version += 1
 
-    def _queue_panel(self, w, want_open):
+    def _queue_button(self, w):
+        from uiautomation.uiautomation import _AutomationClient
+        client = _AutomationClient.instance().IUIAutomation
+        element = w.Element.FindFirst(4, client.CreatePropertyCondition(30011, "PlayQueueToggleButton"))
+        return self.auto.Control.CreateControlFromElement(element) if element else None
+
+    def _queue_panel(self, w, want_open, button=None):
         """Toggle Apple Music's Playing Next panel."""
-        btn = w.ButtonControl(searchDepth=10, AutomationId="PlayQueueToggleButton")
-        if not btn.Exists(1):
+        btn = button or self._queue_button(w)
+        if btn is None:
             return False
         tog = btn.GetTogglePattern()
         is_open = bool(tog and tog.ToggleState == 1)
         if is_open != want_open:
-            (tog.Toggle() if tog else btn.GetLegacyIAccessiblePattern().DoDefaultAction())
-            time.sleep(0.9)
+            (tog.Toggle(waitTime=0) if tog else btn.GetLegacyIAccessiblePattern().DoDefaultAction(waitTime=0))
+            if want_open:
+                time.sleep(0.12)
         return True
+
+    def _queue_controls(self, w):
+        """Read only PlayQueueListView, with row text cached in one provider query."""
+        from uiautomation.uiautomation import _AutomationClient
+        client = _AutomationClient.instance().IUIAutomation
+        condition = client.CreatePropertyCondition(30003, 50007)  # ControlType == ListItem
+        panel = w.Element.FindFirst(4, client.CreatePropertyCondition(30011, "PlayQueueListView"))
+        if not panel:
+            return []
+        cache = client.CreateCacheRequest()
+        cache.TreeScope = 7  # element and descendants, including title/artist/album text
+        cache.AddProperty(30005)
+        cache.AddProperty(30003)
+        elements = panel.FindAllBuildCache(2, condition, cache)  # queue's immediate rows only
+        found = []
+        for i in range(elements.Length):
+            element = elements.GetElement(i)
+            name = element.GetCachedPropertyValue(30005) or ""
+            found.append((element, name))
+            if len(found) >= 40:
+                break
+        return found
+
+    @staticmethod
+    def _queue_texts(element):
+        texts = []
+        def walk(e, depth=0):
+            if depth > 5:
+                return
+            if e.GetCachedPropertyValue(30003) == 50020:
+                name = e.GetCachedPropertyValue(30005) or ""
+                if name and len(name) > 1 and ord(name[0]) < 0x10000:
+                    texts.append(name)
+            children = e.GetCachedChildren()
+            if children:
+                for i in range(children.Length):
+                    walk(children.GetElement(i), depth + 1)
+        walk(element)
+        return texts
 
     def _read_queue(self):
         w = self._window(launch=False)
         if w is None:
+            self.queue_status = "Open Apple Music to load Playing Next."
             return
         with self._ghost(w):
-            if not self._queue_panel(w, True):
+            btn = self._queue_button(w)
+            tog = btn.GetTogglePattern() if btn else None
+            was_open = bool(tog and tog.ToggleState == 1)
+            if not self._queue_panel(w, True, btn):
+                self.queue_status = "Playing Next isn't available in Apple Music yet."
                 return
-            items = []
-
-            def walk(c, d=0):
-                if d > 18:
-                    return
-                for ch in c.GetChildren():
-                    if ch.ControlTypeName == "ListItemControl" and " \u2014 " in (ch.Name or ""):
-                        texts = []
-
-                        def grab(x, dd=0):
-                            if dd > 4:
-                                return
-                            for k in x.GetChildren():
-                                if k.ControlTypeName == "TextControl" and k.Name and len(k.Name) > 1 \
-                                        and ord(k.Name[0]) < 0x10000:
-                                    texts.append(k.Name)
-                                grab(k, dd + 1)
-                        grab(ch)
-                        if texts:
-                            items.append({"title": texts[0], "art": None,
-                                          "artist": " \u2014 ".join(texts[1:3]) if len(texts) > 1 else ""})
-                    walk(ch, d + 1)
-            walk(w)
-            self.queue = items[:40]
-            self._read_modes(w)
-            self._queue_panel(w, False)
-        self.version += 1
-        self._queue_art()
+            try:
+                controls = self._queue_controls(w)
+                if not controls:  # the panel may still be animating on its first open
+                    time.sleep(0.18)
+                    controls = self._queue_controls(w)
+                items = []
+                for element, name in controls:
+                    texts = self._queue_texts(element)
+                    if not texts:
+                        continue
+                    title, artist = texts[0], texts[1] if len(texts) > 1 else ""
+                    with self._art_lock:
+                        art = self._art_cache.get((title, artist))
+                    items.append(dict(title=title, artist=artist, art=art))
+                self.queue = items
+                self.queue_status = "" if items else "Nothing queued up."
+                self.version += 1  # publish rows BEFORE closing the panel or fetching any covers
+                self._queue_art()
+            finally:
+                if not was_open:
+                    self._queue_panel(w, False, btn)
 
     def _queue_art(self):
-        """Look each queued song up in Apple's catalog for its cover."""
-        from concurrent.futures import ThreadPoolExecutor
-
-        def art(q):
-            key = (q["title"], q["artist"])
-            if key in self._art_cache:
-                return self._art_cache[key]
+        """Covers arrive independently; a slow network never blocks playback commands."""
+        def fetch(key):
             try:
-                term = f"{q['title']} {q['artist'].split(' \u2014 ')[0]}"
+                term = f"{key[0]} {key[1]}"
                 url = "https://itunes.apple.com/search?" + urllib.parse.urlencode(
                     {"term": term, "entity": "song", "limit": 1, "country": self.country})
                 with urllib.request.urlopen(url, timeout=5) as r:
@@ -378,16 +453,30 @@ class AppleMusic:
                         img = Image.open(io.BytesIO(r.read())).convert("RGB")
             except Exception:
                 img = None
-            self._art_cache[key] = img
-            return img
+            with self._art_lock:
+                self._art_pending.discard(key)
+                if img is not None:
+                    if len(self._art_cache) >= 256:
+                        self._art_cache.pop(next(iter(self._art_cache)))
+                    self._art_cache[key] = img
+            # Update the CURRENT queue by identity, never an old list's numeric index.
+            if img is not None:
+                for item in self.queue:
+                    if (item["title"], item["artist"]) == key:
+                        item["art"] = img
+                self.version += 1
 
-        todo = [q for q in self.queue if q.get("art") is None][:12]
-        if not todo:
-            return
-        with ThreadPoolExecutor(6) as ex:
-            for q, img in zip(todo, ex.map(art, todo)):
-                q["art"] = img
-        self.version += 1
+        for item in self.queue[:12]:
+            key = (item["title"], item["artist"])
+            with self._art_lock:
+                if item.get("art") is not None or key in self._art_pending:
+                    continue
+                cached = self._art_cache.get(key)
+                if cached is not None:
+                    item["art"] = cached
+                    continue
+                self._art_pending.add(key)
+            self._art_pool.submit(fetch, key)
 
     def _transport_toggle(self, which):
         w = self._window()
@@ -416,28 +505,25 @@ class AppleMusic:
             self.repeat = "one" if "one" in name else "off" if "not repeat" in name else "all"
         self.version += 1
 
-    def _play_queue(self, index):
+    def _play_queue(self, target):
         w = self._window()
         with self._ghost(w):
             if not self._queue_panel(w, True):
-                return
-            items = []
-
-            def walk(c, d=0):
-                if d > 18:
-                    return
-                for ch in c.GetChildren():
-                    if ch.ControlTypeName == "ListItemControl" and " \u2014 " in (ch.Name or ""):
-                        items.append(ch)
-                    walk(ch, d + 1)
-            walk(w)
-            if index < len(items):
-                lp = items[index].GetLegacyIAccessiblePattern()
-                if lp:
-                    lp.DoDefaultAction()      # double click = play from here
-                    time.sleep(0.4)
-            self._queue_panel(w, False)
-        self.jobs.put(("queue", None))
+                raise RuntimeError("Playing Next isn't available")
+            try:
+                for element, _ in self._queue_controls(w):
+                    texts = self._queue_texts(element)
+                    if texts and (texts[0], texts[1] if len(texts) > 1 else "") == target:
+                        item = self.auto.Control.CreateControlFromElement(element)
+                        lp = item.GetLegacyIAccessiblePattern()
+                        if not lp or not lp.DoDefaultAction(waitTime=0):
+                            raise RuntimeError("Queue playback action failed")
+                        break
+                else:
+                    raise RuntimeError("The queue changed before playback")
+            finally:
+                self._queue_panel(w, False)
+        self.refresh_queue(force=True)
 
     def _play_playlist(self, name):
         w = self._window()

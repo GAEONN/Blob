@@ -15,7 +15,7 @@ import numpy as np
 import psutil
 
 import engine as core
-from audio_engine import (BASS, BOOST, CLARITY, ENABLED, EQ0, HEARTBEAT, LEVEL, N_BANDS, QUIT, SHM_NAME,
+from audio_engine import (BASS, BOOST, CLARITY, ENABLED, EQ0, HEARTBEAT, LEVEL, N_BANDS, QUIT,
                           SPEC0, STATUS, SURROUND, VERSION)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -134,10 +134,9 @@ class Sound:
         self.fx_conflict = False
         self.volume = None         # Windows master volume (whatever device is default), 0..1
         self.spectrum = np.zeros(N_BANDS)
-        try:
-            self.shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=64 * 8)
-        except FileExistsError:
-            self.shm = shared_memory.SharedMemory(name=SHM_NAME)
+        # A new launch must not reset an orphan engine's heartbeat/QUIT flags or
+        # share its output stream. Pass this instance's unique mapping to its child.
+        self.shm = shared_memory.SharedMemory(create=True, size=64 * 8)
         self.p = np.ndarray((64,), np.float64, buffer=self.shm.buf)
         self.p[:] = 0
         self.p[HEARTBEAT] = time.time()
@@ -147,7 +146,7 @@ class Sound:
         threading.Thread(target=self._worker, daemon=True).start()
         self.jobs.put(("warm", None))
         opts = core.load_config().get("options", {})
-        if self.cfg.get("enabled") and opts.get("soundstart", False):
+        if opts.get("soundstart", False):
             self.set_enabled(True)
 
     # ── settings ──
@@ -228,7 +227,9 @@ class Sound:
     def shutdown(self):
         done = threading.Event()
         self.jobs.put(("shutdown", done))
-        done.wait(5)
+        if not done.wait(12):  # the startup job can spend up to 8s opening the stream
+            core.log("sound shutdown timed out; leaving the worker's buffer valid until process exit")
+            return
         self.p = None
         self.shm.close()
         try:
@@ -298,7 +299,8 @@ class Sound:
         pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
         self.p[QUIT] = 0
         self.p[STATUS] = 0
-        self.proc = subprocess.Popen([pythonw, os.path.join(HERE, "audio_engine.py"), self.output, out_id],
+        self.proc = subprocess.Popen([pythonw, os.path.join(HERE, "audio_engine.py"), self.output, out_id,
+                                      self.shm.name],
                                      creationflags=0x08000000)
         for _ in range(80):  # wait up to 8 s for the stream to open (only at launch / device change)
             time.sleep(0.1)
@@ -317,6 +319,7 @@ class Sound:
                 self.proc.wait(2)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait(2)
         self.proc = None
 
     def _route(self, on):

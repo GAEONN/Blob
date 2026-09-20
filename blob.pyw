@@ -18,6 +18,7 @@ import engine
 import glass
 from applemusic import AppleMusic
 from media import NowPlaying
+from gaming import GamingMonitor
 from sound import PRESET_ORDER, Sound
 from glass import user32
 
@@ -26,13 +27,6 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 FONTS = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Fonts")
 
 k32 = ctypes.windll.kernel32
-_mutex = k32.CreateMutexW(None, False, "Local\\BlobTrayApp")
-if k32.GetLastError() == 183:  # already running
-    sys.exit(0)
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)
-except OSError:
-    pass
 
 # ─────────────────────────── Win32 plumbing ───────────────────────────
 LRESULT = ctypes.c_ssize_t
@@ -67,10 +61,24 @@ user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
 user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
 user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
 user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.GetCapture.restype = wintypes.HWND
+user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetWindow.restype = wintypes.HWND
+user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                ctypes.c_int, ctypes.c_int, wintypes.UINT]
 
 WM_DESTROY, WM_ACTIVATE, WM_SETCURSOR, WM_KEYDOWN, WM_TIMER = 0x02, 0x06, 0x20, 0x100, 0x113
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_CAPTURECHANGED = 0x200, 0x201, 0x202, 0x215
 WM_APP_TOGGLE, WM_APP_EXIT, WM_APP_REFOCUS = 0x8001, 0x8002, 0x8003
+WM_APP_GAMING_LOCK, WM_HOTKEY, GAMING_HOTKEY = 0x8004, 0x312, 1
+WS_EX_TRANSPARENT, WS_EX_NOACTIVATE = 0x20, 0x08000000
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -307,7 +315,7 @@ class Springs(dict):
 
 
 # ─────────────────────────── panel ───────────────────────────
-PAGES = [("blob", "Blob"), ("sound", "Sound"), ("music", "Music"), ("settings", "Settings")]
+PAGES = [("blob", "Blob"), ("sound", "Sound"), ("music", "Music"), ("gaming", "Gaming"), ("settings", "Settings")]
 POINTERS = [("arrow", "Arrow"), ("triangle", "Triangle"), ("droplet", "Droplet"), ("system", "System")]
 SIZES = [("regular", "Regular"), ("compact", "Compact")]
 
@@ -319,8 +327,10 @@ class Panel:
     TOP = 56    # room taken by the tab bar (which sits at the bottom)
     CONTENT = 18  # content starts this far below the top edge
     WIDE, NARROW = 340, 248
+    GAMING_WIDE, GAMING_NARROW = 624, 560
     RADIUS = 34     # the pane's corner; anything inset by p gets RADIUS - p (concentric radii)
     SS = 2          # content is drawn at 2x and filtered down on the GPU
+    DETAIL_ROWS = 8  # keep large sensor inventories inside the renderer; scroll the rest
 
     def __init__(self, S):
         self.S = S * self.SS      # every layout number below is in supersampled pixels
@@ -331,6 +341,7 @@ class Panel:
         self.tabs_t = 0.0          # animated 0..1 between resting pill and full set
         self.options = {}          # the small on/off settings, straight from the config file
         self.hw_note = ""          # what this machine can and cannot report
+        self.game = {}
         self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
@@ -341,42 +352,32 @@ class Panel:
         self.rects = {}
         self.sliders = {}
 
-    def hardware_note(self):
-        caps = (self.snap or {}).get("caps", {})
-        if caps.get("fan_control") and caps.get("nvidia"):
-            return "ASUS fan control and NVIDIA sensors are active."
-        bits = []
-        if not caps.get("fan_control"):
-            bits.append("No ASUS fan interface: modes hidden")
-        if not caps.get("nvidia"):
-            bits.append("no NVIDIA sensors")
-        src = (self.snap or {}).get("cpu_source")
-        second = {"hwmonitor": "Temperatures come from LibreHardwareMonitor.",
-                  "hwinfo": "Temperatures come from HWiNFO's shared memory.",
-                  "zone": "Using the ACPI sensor. LibreHardwareMonitor or HWiNFO adds CPU and fan sensors.",
-                  "none": "Run LibreHardwareMonitor or HWiNFO for temperatures and fan speeds."}.get(src, "")
-        return ", ".join(bits) + ".\n" + second
-
     def set_compact(self, compact):
         self.compact = compact
-        self.w = round((self.NARROW if compact else self.WIDE) * self.S)
+        self.update_width()
+
+    def update_width(self):
+        widths = (self.GAMING_WIDE, self.GAMING_NARROW) if self.page == "gaming" else (self.WIDE, self.NARROW)
+        self.w = round(widths[bool(self.compact)] * self.S)
 
     def height(self, s, page=None):
         page, c = page or self.page, self.compact
+        if page == "gaming":
+            return round((86 + (56 if self.tabs_open or self.tabs_t > .04 else 0)) * self.S)
         if page == "music":
             v = self.music_view
             if v == "art":
-                return round((self.TOP + 96 + (self.w / self.S - 2 * self.pad_u)) * self.S)
+                return round((self.TOP + 108 + (self.w / self.S - 2 * self.pad_u)) * self.S)
             if v in ("search", "queue"):
                 return round((self.TOP + (330 if c else 470)) * self.S)
-            return round((self.TOP + (132 if c else 540)) * self.S)
+            return round((self.TOP + (160 if c else 540)) * self.S)
         if page == "sound":
             return round((self.TOP + (150 if c else 462)) * self.S)
         if page == "settings":
             return round((self.TOP + (300 if c else 420)) * self.S)
         base = 152 if c else 292
         if self.details_open and s and not c:
-            base = 286 + len(self.detail_rows(s)) * 24 + 16
+            base = 286 + min(self.DETAIL_ROWS, len(self.detail_rows(s))) * 24 + 16
         return round((base + self.TOP) * self.S)
 
     @property
@@ -430,10 +431,13 @@ class Panel:
         self.di, self.da = ImageDraw.Draw(self.ink), ImageDraw.Draw(self.accent)
         self.controls, self.rects, self.sliders = [], {}, {}
 
+    def text_font(self, text, size, style="Regular"):
+        if any(ord(c) > 0x2500 for c in text):
+            return self.f.emoji(size)
+        return self.f.get(size, style)
+
     def label(self, x, y, t, size, style="Regular", a=175, anchor="la", temp=None, icon=False):
-        font = self.f.icon(size) if icon else self.f.get(size, style)
-        if not icon and any(ord(c) > 0x2500 for c in t):  # emoji & symbols: Segoe UI Emoji has them
-            font = self.f.emoji(size)
+        font = self.f.icon(size) if icon else self.text_font(t, size, style)
         if temp is not None and temp >= 80:
             self.da.text((x, y), t, font=font, fill=HOT if temp >= 90 else WARN, anchor=anchor)
         else:
@@ -507,11 +511,15 @@ class Panel:
 
     # ── pages ──
     def draw(self, s, snd, glassiness, startup, pointer="arrow", media=None, seek=None, captureable=False):
+        self.update_width()
         # the album backdrop goes down first, under everything else on the music page
         S, W = self.S, self.w
         H = self.height(s)
         self._begin(H)
         pad = self.pad_u * S
+        if self.page == "gaming":
+            self._gaming(s)
+            return self.ink, self.accent, self.controls
         # the switcher sits at the bottom of a bottom-anchored pane, so it never moves between pages
         t = max(0.0, min(1.0, self.tabs_t))           # 0 = resting pill, 1 = full set
         y0, y1 = H - 50 * S, H - 16 * S
@@ -544,14 +552,78 @@ class Panel:
             (self._blob_compact if self.compact else self._blob)(s, pad, top)
         return self.ink, self.accent, self.controls
 
+    def _gaming(self, s):
+        """A single glass instrument strip, not a second dashboard over the game."""
+        S, W, game = self.S, self.w, self.game
+        self.glass_button("tabs", 27 * S, 43 * S, 15 * S, "\uE700", 12, always=True)
+        cpu, gpu = s.get("cpu", {}), s.get("gpu", {})
+        pct = lambda v: f"{v:.0f}% load" if v is not None else "No load sensor"
+        fps, ms = game.get("fps"), game.get("frame_ms")
+        fans = [f.get("rpm") for f in s.get("fans", [])]
+        rpm = lambda i: f"{fans[i] / 1000:.1f}k" if i < len(fans) and fans[i] is not None else "—"
+        ram, ram_gb = game.get("ram_percent"), game.get("ram_gb")
+        power = gpu.get("power")
+        power_hint = "AC power" if s.get("power", {}).get("plugged") else "On battery"
+        fps_hint = f"{ms:.1f} ms" if ms is not None else "Focus a game"
+        if fps is None and any(w in game.get("status", "") for w in ("permission", "Install", "unavailable", "Couldn't")):
+            fps_hint = "Setup needed"
+        if fps is None and "Capture stopped" in game.get("status", ""):
+            fps_hint = "Retrying…"
+        metrics = [
+            ("FPS", f"{fps:.0f}" if fps is not None else "—", fps_hint, None),
+            ("CPU", fmt_temp(cpu.get("temp")), pct(cpu.get("load")), cpu.get("temp")),
+            ("GPU", fmt_temp(gpu.get("temp")), pct(gpu.get("load")), gpu.get("temp")),
+            ("RAM", f"{ram:.0f}%" if ram is not None else "—", f"{ram_gb:.1f} GB" if ram_gb is not None else "System memory", None),
+            ("FANS", rpm(0), f"{rpm(1)} GPU rpm" if len(fans) > 1 else "CPU rpm", None),
+            ("GPU POWER", f"{power:.0f} W" if power is not None else "—", power_hint, None),
+        ]
+        left, step = 58 * S, (W - 76 * S) / len(metrics)
+        for i, (name, value, hint, temp) in enumerate(metrics):
+            x, width = left + i * step, step - 10 * S
+            self.label(x, 17 * S, name, 10, "Semibold Text", 170)
+            self.label(x, 30 * S, self.fit(value, 23, "Semibold Display", width), 23,
+                       "Semibold Display", 255, temp=temp)
+            self.label(x, 61 * S, self.fit(hint, 11, "Regular", width), 11, "Regular", 190)
+        # The navigation stays tucked away until the menu is opened.
+        if self.tabs_open or self.tabs_t > .04:
+            H = self.height(s)
+            self.segmented("page", PAGES, self.page, (18 * S, H - 50 * S, W - 18 * S, H - 16 * S),
+                           13, alpha=max(.05, min(1, self.tabs_t)), hit=self.tabs_t > .55)
+
     def fit(self, text, size, style, max_w):
         """Ellipsize text to max_w pixels."""
-        font = self.f.get(size, style)
+        font = self.text_font(text, size, style)
         if font.getlength(text) <= max_w:
             return text
+        if font.getlength("…") > max_w:
+            return ""
         while text and font.getlength(text + "…") > max_w:
             text = text[:-1]
         return text.rstrip() + "…"
+
+    def wrap(self, text, size, style, max_w):
+        """Wrap without shrinking type, including device names with no spaces."""
+        lines = []
+        for paragraph in (text or "").splitlines():
+            line = ""
+            for word in paragraph.split():
+                candidate = (line + " " + word).strip()
+                if self.text_font(candidate, size, style).getlength(candidate) <= max_w:
+                    line = candidate
+                    continue
+                if line:
+                    lines.append(line)
+                line = ""
+                for char in word:
+                    candidate = line + char
+                    if line and self.text_font(candidate, size, style).getlength(candidate) > max_w:
+                        lines.append(line)
+                        line = char
+                    else:
+                        line = candidate
+            if line:
+                lines.append(line)
+        return lines or [""]
 
     def transport(self, key, cx, cy, r, kind, always=False, active=False):
         """Round glass button with a solid mark: shuffle, rewind, play/pause, forward, repeat."""
@@ -627,7 +699,7 @@ class Panel:
         if view == "queue":
             return self._music_queue(pad, top)
         if view == "art":
-            return self._music_art(m, pad, top)
+            return self._music_art(m, pad, top, seek)
         if self.compact:
             return self._music_mini(m, seek, pad, top)
         S, W = self.S, self.w
@@ -644,7 +716,8 @@ class Panel:
             L(pad, ty + 26 * S, self.fit(sub or m.source, 13, "Regular", tw), 13, "Regular", 190)
         else:
             L(pad, ty, "Not playing", 18, "Semibold Text", 255)
-            L(pad, ty + 26 * S, "Search for something to start.", 13, "Regular", 170)
+            L(pad, ty + 26 * S, self.fit("Search for something to start.", 13, "Regular", tw),
+              13, "Regular", 170)
         self.glass_button("mview:queue", W - pad - 15 * S, ty + 18 * S, 15 * S, "\uE8FD", 11, always=True)
         self.glass_button("mview:search", W - pad - 52 * S, ty + 18 * S, 15 * S, "\uE721", 11, always=True)
 
@@ -671,15 +744,15 @@ class Panel:
         a = round(54 * S)
         self._artwork(m, round(pad), round(px(2)), a, self.inner_radius(pad, a / 2), 20)
         tx = pad + a + 12 * S
-        tw = W - pad - tx - 58 * S      # leave room for the search / queue buttons
+        tw = W - pad - tx - 72 * S      # clear the left edge of the queue button, not just its centre
         if m and m.active:
             L(tx, px(8), self.fit(m.title or "", 13, "Semibold Text", tw), 13, "Semibold Text", 255)
             L(tx, px(26), self.fit(m.artist or m.source, 11, "Regular", tw), 11, "Regular", 180)
         else:
-            L(tx, px(8), "Not playing", 13, "Semibold Text", 255)
-            L(tx, px(26), "Tap search to start", 11, "Regular", 170)
-        self._progress(m, seek, pad, W - pad, px(66), times=False)
-        cy = px(98)
+            L(tx, px(8), self.fit("Not playing", 13, "Semibold Text", tw), 13, "Semibold Text", 255)
+            L(tx, px(26), self.fit("Tap search to start", 11, "Regular", tw), 11, "Regular", 170)
+        self._progress(m, seek, pad + 12 * S, W - pad - 12 * S, px(76), times=False)
+        cy = px(112)
         playing = bool(m and m.playing)
         am = self.am
         rep = getattr(am, "repeat", "off")
@@ -693,12 +766,12 @@ class Panel:
         self.glass_button("mview:search", W - pad - 22 * S, px(20), 13 * S, "\uE721", 10, always=True)
         self.glass_button("mview:queue", W - pad - 52 * S, px(20), 13 * S, "\uE8FD", 10, always=True)
 
-    def _music_art(self, m, pad, top):
+    def _music_art(self, m, pad, top, seek=None):
         """Just the artwork, Apple Music style, with the transport underneath."""
         S, W = self.S, self.w
         a = round(W - 2 * pad)
         self._artwork(m, round(pad), round(top), a, self.inner_radius(pad), 60)
-        self._progress(m, None, pad, W - pad, top + a + 20 * S, times=False)
+        self._progress(m, seek, pad + 12 * S, W - pad - 12 * S, top + a + 20 * S, times=False)
         cy = top + a + 58 * S
         playing = bool(m and m.playing)
         am, rep = self.am, getattr(self.am, "repeat", "off")
@@ -737,6 +810,8 @@ class Panel:
         frac = pos / dur if dur > 0 else 0.0
         if m and m.active and dur > 0:
             self.slider("seek", frac, x0, x1, y)
+            if not times:
+                self.rects["slider:seek"] = (x0 - 12 * S, y - 12 * S, x1 + 12 * S, y + 12 * S)
         else:
             th = 6 * S
             self.static((x0, y - th / 2, x1, y + th / 2), th / 2, frost=1.0, lift=0.05)
@@ -785,12 +860,14 @@ class Panel:
             L(tx, (box[1] + box[3]) / 2, shown, size, "Regular", 255, "lm")
             cx = tx + self.f.get(size).getlength(shown) + 2 * S
         else:
-            L(tx, (box[1] + box[3]) / 2, "Search Apple Music", size, "Regular", 120, "lm")
+            L(tx, (box[1] + box[3]) / 2,
+              self.fit("Search Apple Music", size, "Regular", box[2] - tx - 14 * S),
+              size, "Regular", 120, "lm")
             cx = tx
         if int(time.time() * 2) % 2 == 0:
             self.ink_shape((cx, box[1] + 10 * S, cx + 1.5 * S, box[3] - 10 * S), 0.75 * S, 230)
         row_h = 44 if self.compact else self.ROW_SEARCH
-        list_top, list_bottom = top + 50 * S, self.height(None) - (76 if self.compact else 90) * S
+        list_top, list_bottom = top + 50 * S, self.height(None) - 90 * S
         results = am.results if am else []
         for i, y in self._list_rows("search", len(results), row_h, list_top, list_bottom):
             r = results[i]
@@ -814,7 +891,8 @@ class Panel:
         msg = am.status if am else ""
         if not msg and not results:
             msg = "Type a song, artist or playlist, then Enter."
-        L(pad, self.height(None) - (64 if self.compact else 76) * S, msg, 12, "Regular", 165)
+        L(pad, self.height(None) - 76 * S,
+          self.fit(msg, 12, "Regular", W - 2 * pad), 12, "Regular", 165)
 
     def _music_queue(self, pad, top):
         S, W = self.S, self.w
@@ -822,9 +900,10 @@ class Panel:
         self._back_row(pad, top, "Playing Next")
         items = am.queue if am else []
         row_h = 34 if self.compact else 42
-        list_top, list_bottom = top + 48 * S, self.height(None) - (76 if self.compact else 90) * S
+        list_top, list_bottom = top + 48 * S, self.height(None) - 90 * S
         if not items:
-            L(pad, list_top + 10 * S, "Nothing queued up.", 12, "Regular", 165)
+            msg = "Loading Playing Next…" if getattr(am, "queue_loading", False) else "Nothing queued up."
+            L(pad, list_top + 10 * S, msg, 12, "Regular", 165)
         for i, y in self._list_rows("queue", len(items), row_h, list_top, list_bottom):
             q = items[i]
             row = (pad - 8 * S, y, W - pad + 8 * S, y + (row_h - 4) * S)
@@ -844,7 +923,9 @@ class Panel:
               "Semibold Text", 235)
             if not self.compact:
                 L(tx, y + 20 * S, self.fit(q["artist"], 11, "Regular", tw), 11, "Regular", 160)
-        L(pad, self.height(None) - (64 if self.compact else 76) * S, am.status if am else "", 12, "Regular", 165)
+        L(pad, self.height(None) - 76 * S,
+          self.fit((getattr(am, "queue_action_status", "") or getattr(am, "queue_status", am.status))
+                   if am else "", 12, "Regular", W - 2 * pad), 12, "Regular", 165)
 
     def _volume_row(self, snd, pad, y):
         S, W = self.S, self.w
@@ -886,7 +967,13 @@ class Panel:
         L(W - pad - 58 * S, px(12), f"+{snd.boost_db:.0f} dB", 12, "Regular", 175, "rm")
         self.toggle("sound", snd.enabled, W - pad - 48 * S, px(-2))
         self.slider("boost", snd.boost, pad + 12 * S, W - pad - 12 * S, px(48))
-        self.controls.append(("viz", (pad, px(70), W - pad, px(120))))
+        if snd.error or snd.fx_conflict:
+            self.controls.append(("viz", (pad, px(70), W - pad, px(85))))
+            msg = "FxSound is using the audio." if snd.fx_conflict else snd.error
+            for i, line in enumerate(self.wrap(msg, 11, "Regular", W - 2 * pad)[:2]):
+                L(pad, px(92 + i * 15), line, 11)
+        else:
+            self.controls.append(("viz", (pad, px(70), W - pad, px(120))))
 
     def _blob(self, s, pad, top):
         S, W = self.S, self.w
@@ -931,7 +1018,8 @@ class Panel:
         else:
             msg = "Auto is choosing a mode…"
         if msg:
-            L(pad, px(198), msg, 12)
+            for i, line in enumerate(self.wrap(msg, 12, "Regular", W - 2 * pad)[:2]):
+                L(pad, px(194 + i * 15), line, 12)
         self.di.rectangle((pad, px(228), W - pad, px(228) + max(1, round(S)) - 1), fill=45)
         row = (pad - 8 * S, px(236), W - pad + 8 * S, px(264))
         self.hover_lens("details", row, (row[3] - row[1]) / 2)
@@ -939,11 +1027,14 @@ class Panel:
         self.di.text((W - pad, px(250)), "" if self.details_open else "", font=self.f.icon(10),
                      fill=175, anchor="rm")
         if self.details_open:
-            y = px(280)
-            for k, v, t in self.detail_rows(s):
-                L(pad, y, k, 13)
+            rows = self.detail_rows(s)
+            bottom = px(280 + min(self.DETAIL_ROWS, len(rows)) * 24)
+            for i, y in self._list_rows("details", len(rows), 24, px(280), bottom):
+                k, v, t = rows[i]
+                v = self.fit(v, 13, "Regular", (W - 2 * pad) * 0.60)
+                name_w = W - 2 * pad - self.text_font(v, 13).getlength(v) - 12 * S
+                L(pad, y, self.fit(k, 13, "Regular", name_w), 13)
                 L(W - pad, y, v, 13, "Regular", 255, "ra", temp=t)
-                y += 24 * S
 
     def _sound(self, snd, pad, top):
         S, W = self.S, self.w
@@ -951,7 +1042,8 @@ class Panel:
         L = self.label
         L(pad, px(6), "Output", 12)
         self.hover_lens("device", (pad - 6 * S, px(20), W - pad - 64 * S, px(44)), 12 * S)
-        L(pad, px(32), short_device(snd.output) + "  ›", 14, "Semibold Text", 255, "lm")
+        L(pad, px(32), self.fit(short_device(snd.output) + "  ›", 14, "Semibold Text",
+                              W - 2 * pad - 70 * S), 14, "Semibold Text", 255, "lm")
         self.toggle("sound", snd.enabled, W - pad - 48 * S, px(10))
         self.controls.append(("viz", (pad, px(58), W - pad, px(138))))
 
@@ -971,7 +1063,9 @@ class Panel:
             self.static(bx, (bx[3] - bx[1]) / 2, strength=5 * S, bevel=8 * S, zoom=0.95, rim=0.9, frost=1.0,
                         lift=0.16, raised=1.0)
             L((bx[0] + bx[2]) / 2, px(430), "Quit FxSound", 12, "Semibold Text", 255, "mm")
-            L(pad, px(430), "FxSound keeps taking the audio.", 12, anchor="lm")
+            for i, line in enumerate(self.wrap("FxSound is using the audio.", 12, "Regular",
+                                               bx[0] - pad - 12 * S)[:2]):
+                L(pad, px(422 + i * 15), line, 12, anchor="lm")
             return
         if snd.error:
             msg = snd.error
@@ -979,7 +1073,8 @@ class Panel:
             msg = f"Enhancing everything you hear · +{snd.boost_db:.0f} dB boost"
         else:
             msg = "Off · turn on to boost and shape your audio"
-        L(pad, px(430), msg, 12, anchor="lm")
+        for i, line in enumerate(self.wrap(msg, 12, "Regular", W - 2 * pad)[:2]):
+            L(pad, px(422 + i * 15), line, 12, anchor="lm")
 
     def _settings(self, glassiness, startup, pointer, pad, top, captureable=False):
         """Grouped, scrollable settings: each section covers one part of Blob."""
@@ -1007,23 +1102,48 @@ class Panel:
             ("toggle", "capture", "Show in screen recordings", captureable,
              "Glass stops updating while this is on"),
         ]
+        rows[rows.index(("head", "Fans")):rows.index(("head", "Fans"))] = [
+            ("head", "Gaming"),
+            ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
+            ("note", "gaming_tip", "Gaming is click-through. Ctrl+Alt+G or the tray menu unlocks it to move or change views. Lock again before playing. Use borderless games.", None, None),
+        ]
         h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46}
-        total = sum(h[r[0]] for r in rows) * S
-        view_h = self.height(None) - top - 78 * S
-        first = self.scroll.get("settings", 0)
-        max_off = max(0.0, total - view_h)
-        off = max(0.0, min(first * 40 * S, max_off))
-        self.scroll["settings"] = off / (40 * S)
-        y = top - off
+        layouts = []
         for row in rows:
+            kind = row[0]
+            names, hints = [], []
+            rh = h[kind]
+            if kind == "toggle":
+                names = self.wrap(row[2], 13 if c else 14, "Regular", W - 2 * pad - 60 * S)
+                hints = self.wrap(row[4], 10, "Regular", W - 2 * pad) if row[4] else []
+                rh = max(40, 12 + len(names) * 18 + len(hints) * 14)
+            elif kind == "note":
+                names = self.wrap(row[2], 11, "Regular", W - 2 * pad)
+                rh = max(30, 14 + len(names) * 16)
+            layouts.append((row, rh * S, names, hints))
+        total = sum(rh for _, rh, _, _ in layouts)
+        view_h = self.height(None) - top - 78 * S
+        # Scroll by complete variable-height rows. Every control can become fully visible,
+        # with no half-hidden hit targets or fixed 40px steps skipping wrapped rows.
+        last_first, tail_h = len(layouts) - 1, layouts[-1][1]
+        while last_first > 0 and tail_h + layouts[last_first - 1][1] <= view_h:
+            last_first -= 1
+            tail_h += layouts[last_first][1]
+        first = max(0, min(int(self.scroll.get("settings", 0)), last_first))
+        self.scroll["settings"] = first
+        off = sum(rh for _, rh, _, _ in layouts[:first])
+        max_off = sum(rh for _, rh, _, _ in layouts[:last_first])
+        y = top
+        for index, (row, rh, names, hints) in enumerate(layouts[first:], first):
             kind, key = row[0], row[1]
-            rh = h[kind] * S
-            if y >= top - 2 * S and y + rh <= top + view_h:   # only fully visible rows
+            if kind == "head" and index + 1 < len(layouts) and y + rh + layouts[index + 1][1] > top + view_h:
+                break  # keep each section title with its first setting
+            if y + rh <= top + view_h:
                 if kind == "head":
                     L(pad, y + 14 * S, key.upper(), 10, "Semibold Text", 130, "lm")
                     self.di.rectangle((pad, y + 24 * S, W - pad, y + 24 * S + max(1, round(S)) - 1), fill=32)
                 elif kind == "note":
-                    for i, line in enumerate((row[2] or "").split("\n")[:2]):
+                    for i, line in enumerate(names):
                         L(pad, y + (10 + i * 16) * S, line, 11, "Regular", 150, "lm")
                 elif kind == "slider":
                     _, _, name, val, hint = row
@@ -1036,10 +1156,13 @@ class Panel:
                     self.segmented(key, options, cur, (pad, y + 26 * S, W - pad, y + 54 * S), 11)
                 else:
                     _, _, name, val, hint = row
-                    L(pad, y + (13 if hint else 18) * S, name, 13 if c else 14, "Regular", 255, "lm")
-                    if hint:
-                        L(pad, y + 27 * S, hint, 10, "Regular", 135, "lm")
+                    for i, line in enumerate(names):
+                        L(pad, y + (16 + i * 18) * S, line, 13 if c else 14, "Regular", 255, "lm")
+                    for i, line in enumerate(hints):
+                        L(pad, y + (16 + len(names) * 18 + i * 14) * S, line, 10, "Regular", 135, "lm")
                     self.toggle(key, val, W - pad - 48 * S, y + 4 * S)
+            else:
+                break
             y += rh
         if total > view_h:      # scroll hint
             bar_h = view_h * view_h / total
@@ -1053,9 +1176,11 @@ class App:
         threading.Thread(target=self.mon.run, daemon=True).start()
         self.sound = Sound()
         self.media = NowPlaying()
+        self.gaming = GamingMonitor()
         self.am = AppleMusic(refocus=lambda: user32.PostMessageW(self.hwnd, WM_APP_REFOCUS, 0, 0))
         self.hover_since = (None, 0.0)
         self.last_queue = 0.0
+        self.queue_track = None
         self.am_seen = -1
         self.hold_until = 0.0
         self.seek_value = None
@@ -1071,7 +1196,7 @@ class App:
             self.am.search(self.panel.query)
         # the window buffer is always sized for the wide panel; compact just draws narrower inside it
         self.ss = Panel.SS
-        self.glass = glass.GlassRenderer(S, round(Panel.WIDE * S), round(self.panel.max_height() / self.ss))
+        self.glass = glass.GlassRenderer(S, round(Panel.GAMING_WIDE * S), round(self.panel.max_height() / self.ss))
         self.glass.set_supersample(self.ss)
         cfg = engine.load_config()
         self.glassiness = float(cfg.get("glass", 0.35))
@@ -1083,6 +1208,7 @@ class App:
         self.springs = Springs()
         self.controls, self.old_controls = [], []
         self.visible = self.pinned = False
+        self.gaming_unlocked = False
         if PROFILE is not None:
             self.pinned = True  # profiling: keep the panel up even when focus moves elsewhere
         self.pos = None  # window top-left (screen px)
@@ -1121,10 +1247,18 @@ class App:
         self.glass.dump_path = os.environ.get("BLOB_DUMP")
         self.cur_hand = user32.LoadCursorW(None, 32649)
         self.cur_arrow = user32.LoadCursorW(None, 32512)
+        self.apply_gaming_input()
+        self.gaming_hotkey_registered = bool(user32.RegisterHotKey(
+            self.hwnd, GAMING_HOTKEY, 0x4003, ord("G")))  # Ctrl+Alt, MOD_NOREPEAT
+        if not self.gaming_hotkey_registered:
+            engine.log("Ctrl+Alt+G is unavailable; use the tray menu to unlock the gaming strip.")
 
         self.icon = pystray.Icon(APP_NAME, tray_image(None), APP_NAME, menu=pystray.Menu(
             pystray.MenuItem("Open", lambda: user32.PostMessageW(self.hwnd, WM_APP_TOGGLE, 0, 0),
                              default=True, visible=False),
+            pystray.MenuItem(lambda item: "Lock gaming strip" if self.gaming_unlocked else "Unlock gaming strip",
+                             lambda: user32.PostMessageW(self.hwnd, WM_APP_GAMING_LOCK, 0, 0),
+                             enabled=lambda item: self.visible and self.panel.page == "gaming"),
             pystray.MenuItem("Start with Windows", lambda i, it: set_startup(not startup_enabled()),
                              checked=lambda i: startup_enabled()),
             pystray.MenuItem("Exit", lambda: user32.PostMessageW(self.hwnd, WM_APP_EXIT, 0, 0)),
@@ -1143,6 +1277,9 @@ class App:
             PROFILE.setdefault("draw_content", []).append(time.perf_counter() - t0)
 
     def _draw_content(self, crossfade=False):
+        self.gaming.set_active(self.visible and self.panel.page == "gaming")
+        if self.panel.page in ("gaming", "settings"):
+            self.panel.game = self.gaming.snapshot()
         self.panel.hw_note = self.hardware_note()
         ink, accent, controls = self.panel.draw(self.snap, self.sound, self.glassiness, self.startup,
                                                 self.pointer_style, self.media, self.seek_value,
@@ -1214,11 +1351,70 @@ class App:
         self.frame_dirty = True
 
     # ── visibility ──
+    @property
+    def gaming_locked(self):
+        return self.panel.page == "gaming" and not self.gaming_unlocked
+
+    def apply_gaming_input(self):
+        # Layered + TRANSPARENT passes input to other processes, unlike merely
+        # returning MA_NOACTIVATE or HTTRANSPARENT from a mouse message.
+        style = user32.GetWindowLongPtrW(self.hwnd, -20)
+        desired = style & ~(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)
+        if self.panel.page == "gaming":
+            desired |= WS_EX_NOACTIVATE
+            if self.gaming_locked:
+                desired |= WS_EX_TRANSPARENT
+        if desired != style:
+            user32.SetWindowLongPtrW(self.hwnd, -20, desired)
+        if self.gaming_locked:
+            self.drag = self.slider_drag = self.pressed = None
+            self.hover = self.mouse_xy = self.attached = self.detaching = None
+            self.mouse_in = False
+            self.panel.tabs_open = False
+            if user32.GetCapture() == self.hwnd:
+                user32.ReleaseCapture()
+            user32.SetCursor(self.cur_arrow)
+
+    def toggle_gaming_input(self):
+        if not self.visible or self.panel.page != "gaming":
+            return
+        self.gaming_unlocked = not self.gaming_unlocked
+        self.apply_gaming_input()
+        # Expanded navigation makes edit mode obvious and provides a way out.
+        self.panel.tabs_open = self.gaming_unlocked
+        self.frame_dirty = True
+        self.icon.update_menu()
+
+    def maintain_gaming_topmost(self):
+        if not self.visible or self.panel.page != "gaming":
+            return
+        # Games can themselves become topmost when focused. Creating Blob with
+        # TOPMOST once does not keep it above another topmost window thereafter.
+        foreground = user32.GetForegroundWindow()
+        if not foreground or foreground == self.hwnd:
+            return
+        needs_raise = not (user32.GetWindowLongPtrW(self.hwnd, -20) & 0x8)
+        if not needs_raise and user32.GetWindowLongPtrW(foreground, -20) & 0x8:
+            above = user32.GetWindow(self.hwnd, 3)  # GW_HWNDPREV
+            for _ in range(128):  # bounded: another process can reorder/destroy windows
+                if not above:
+                    break
+                if above == foreground:
+                    needs_raise = True
+                    break
+                above = user32.GetWindow(above, 3)
+        if needs_raise:
+            # NOMOVE | NOSIZE | NOACTIVATE | NOOWNERZORDER. Never change focus,
+            # click-through, game settings, or the game's own window styles.
+            user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x213)
+
     def show(self):
         self.snap = self.mon.snapshot() or self.snap
         if not self.snap:
             return
         self.visible = True
+        self.gaming_unlocked = False
+        self.apply_gaming_input()
         self.draw_content()
         h = self.springs["height"]
         h.x = h.target
@@ -1233,11 +1429,16 @@ class App:
         if self.captureable:
             self.refresh_backdrop()
         self.frame()
-        user32.ShowWindow(self.hwnd, 5)
-        user32.SetForegroundWindow(self.hwnd)
+        user32.ShowWindow(self.hwnd, 4 if self.panel.page == "gaming" else 5)
+        if self.panel.page != "gaming":
+            user32.SetForegroundWindow(self.hwnd)
+        self.maintain_gaming_topmost()
         self._schedule()
 
     def hide(self):
+        self.gaming_unlocked = False
+        self.apply_gaming_input()
+        self.gaming.set_active(False)
         self.mouse_in = False
         self.hover = None
         user32.KillTimer(self.hwnd, 1)
@@ -1247,14 +1448,14 @@ class App:
         self.last_hide = time.time()
 
     def _schedule(self, animating=True):
-        want = 8  # poll the screen at ~120 Hz; frames are only drawn when something changed
+        want = 16 if self.panel.page == "gaming" else 8
         if want != self.interval:
             self.interval = want
             user32.SetTimer(self.hwnd, 1, want, None)
 
     # ── lenses from controls + springs ──
     def resolve(self, controls, presence, prefix):
-        S, sp = self.S, self.springs
+        S, sp = self.panel.S, self.springs  # all control geometry is supersampled until upload
         out, viz = [], None
         for c in controls:
             kind = c[0]
@@ -1391,7 +1592,7 @@ class App:
         if abs(tabs.x - self.panel.tabs_t) > 0.004:     # redraw the labels as the pill opens
             self.panel.tabs_t = tabs.x
             self.draw_content()
-        if self.panel.page == "music" and self.panel.music_view == "queue" and not self.am.queue                 and now - self.last_queue > 3:
+        if self.panel.page == "music" and self.panel.music_view == "queue" and now - self.last_queue > 10:
             self.last_queue = now
             self.am.refresh_queue()
         if self.panel.page == "music" and self.panel.music_view == "search":
@@ -1403,6 +1604,10 @@ class App:
                 self.hover_since = (key, 0.0)  # once per rest
         if self.panel.page == "music":
             m = self.media
+            track = (m.title, m.artist)
+            if m.active and track != self.queue_track:
+                self.queue_track = track
+                self.am.refresh_queue(force=True)
             seen = (m.art_version, m.playing, m.active, m.title)
             view = self.panel.music_view
             live = (view in ("now", "art") and m.playing) or view == "search"  # progress / caret
@@ -1414,6 +1619,9 @@ class App:
                 self.am_seen = self.am.version
                 self.last_text = now
                 self.draw_content()
+        elif self.panel.page == "gaming" and now - self.last_text >= .5:
+            self.last_text = now
+            self.draw_content()
         viz_live = self.panel.page == "sound" and (self.sound.enabled or self.sound.spectrum.max() > 0.01)
         animating = self.springs.moving or self.drag is not None or bool(self.slider_drag)             or abs(self.vel).max() > 0.5
         force = animating or viz_live or self.frame_dirty
@@ -1459,7 +1667,7 @@ class App:
     SNAP = 15  # px the pointer can drag a button's glass before the bridge breaks
 
     def _update_pointer(self, lenses):
-        S, sp = self.S, self.springs
+        S, sp = self.panel.S, self.springs
         style = self.pointer_style
         hv = {c[1]: c[2] for c in self.controls if c[0] == "hover"}
         xy = self.mouse_xy if self.mouse_in else None
@@ -1499,7 +1707,7 @@ class App:
 
     def pull_offset(self, key, rect):
         """Where a hover pill's glass is being dragged by the fused pointer (springs = wobble)."""
-        S, sp = self.S, self.springs
+        S, sp = self.panel.S, self.springs
         ox = sp.get("pull:x:" + key, 0.0, k=700, zeta=0.62)
         oy = sp.get("pull:y:" + key, 0.0, k=700, zeta=0.62)
         if key == self.attached and self.mouse_xy:
@@ -1545,10 +1753,18 @@ class App:
                 self.media_seen = None
                 self.old_page_springs()
                 self.panel.page = key
+                self.gaming_unlocked = False
+                self.apply_gaming_input()
+                self.panel.update_width()
+                if key == "gaming":
+                    self.panel.tabs_open = False
+                    self.panel.tabs_t = 0
+                    self.springs.pop("tabs", None)
                 crossfade = True
                 if key == "sound":
                     self.sound.refresh_devices()
                 self.startup = startup_enabled()
+                self._schedule()
         elif kind == "mode":
             self.mon.controller.set_mode(key)
             self.snap = self.mon.snapshot()
@@ -1566,6 +1782,7 @@ class App:
             self.old_page_springs()
             if key == "queue":
                 self.am.refresh_queue()
+                self.last_queue = time.perf_counter()
         elif kind == "result":
             self.am.play_result(int(key))
             self.hold_until = time.time() + 10
@@ -1578,7 +1795,7 @@ class App:
         elif kind == "searchbox":
             pass
         elif kind == "tabs":
-            self.panel.tabs_open = True
+            self.panel.tabs_open = not self.panel.tabs_open if self.panel.page == "gaming" else True
         elif kind == "am":
             (self.am.toggle_shuffle if key == "shuffle" else self.am.cycle_repeat)()
             self.hold_until = time.time() + 6
@@ -1610,8 +1827,6 @@ class App:
                 cfg = engine.load_config()
                 cfg["options"] = opts
                 engine.save_config(cfg)
-                if key == "soundstart":
-                    self.sound.enabled_at_launch = opts[key]
         elif kind == "device":
             self.sound.next_output()
         elif kind == "fxquit":
@@ -1633,6 +1848,16 @@ class App:
     # ── messages ──
     def wndproc(self, hwnd, msg, wp, lp):
         try:
+            if msg == WM_APP_GAMING_LOCK or (msg == WM_HOTKEY and wp == GAMING_HOTKEY):
+                self.toggle_gaming_input()
+                return 0
+            if self.gaming_locked:
+                if msg == 0x84:  # WM_NCHITTEST; the layered style is the cross-process protection
+                    return -1  # HTTRANSPARENT
+                if 0x200 <= msg <= 0x20E or msg == WM_SETCURSOR:
+                    return 0  # ignore any mouse messages queued before locking
+            if msg == 0x21 and self.panel.page == "gaming":  # WM_MOUSEACTIVATE
+                return 3  # MA_NOACTIVATE: dragging the strip must not steal the game's focus
             if msg == WM_TIMER and wp == 1 and self.visible:
                 self.frame()
                 return 0
@@ -1653,11 +1878,11 @@ class App:
                 self.quit()
                 return 0
             if msg == WM_APP_REFOCUS:  # Apple Music briefly took focus: hand it back to the panel
-                if self.visible:
+                if self.visible and self.panel.page != "gaming":
                     user32.SetForegroundWindow(hwnd)
                 return 0
             if msg == WM_ACTIVATE and (wp & 0xFFFF) == 0 and self.visible and not self.pinned \
-                    and not self.slider_drag and time.time() > self.hold_until:
+                    and self.panel.page != "gaming" and not self.slider_drag and time.time() > self.hold_until:
                 self.hide()
                 return 0
             if msg == WM_KEYDOWN and wp == 0x1B:
@@ -1682,7 +1907,9 @@ class App:
                 return 0
             if msg == 0x20A:  # WM_MOUSEWHEEL
                 view = self.panel.music_view
-                key = "settings" if self.panel.page == "settings" else                     (view if self.panel.page == "music" and view in ("search", "queue") else None)
+                key = ("settings" if self.panel.page == "settings" else
+                       "details" if self.panel.page == "blob" and self.panel.details_open else
+                       view if self.panel.page == "music" and view in ("search", "queue") else None)
                 if key:
                     step = -1 if ctypes.c_short(wp >> 16).value > 0 else 1
                     self.panel.scroll[key] = max(0, self.panel.scroll.get(key, 0) + step)
@@ -1715,7 +1942,8 @@ class App:
                         user32.TrackMouseEvent(ctypes.byref(tme))
                     self.mouse_xy = (x, y)
                     self.hover = self.panel.hit(x, y)
-                    want = bool(self.hover and (self.hover == "tabs" or self.hover.startswith("page:")))
+                    want = (self.panel.tabs_open if self.panel.page == "gaming" else
+                            bool(self.hover and (self.hover == "tabs" or self.hover.startswith("page:"))))
                     if want != self.panel.tabs_open:
                         self.panel.tabs_open = want
                     if time.perf_counter() - self.last_frame >= 0.006:
@@ -1725,7 +1953,8 @@ class App:
             if msg == 0x2A3 and not os.environ.get("BLOB_NOLEAVE"):  # WM_MOUSELEAVE (debug: ignore)
                 self.mouse_in = False
                 self.hover = None
-                self.panel.tabs_open = False
+                if self.panel.page != "gaming":
+                    self.panel.tabs_open = False
                 self.frame_dirty = True
                 return 0
             if msg == WM_LBUTTONDOWN:
@@ -1789,6 +2018,7 @@ class App:
 
     def _tick(self):
         self._maybe_end_capture()
+        self.maintain_gaming_topmost()  # 1 Hz, not part of rendering or capture
         self.sound.heartbeat()
         s = self.mon.snapshot()
         if not s:
@@ -1852,12 +2082,15 @@ class App:
         late = time.time() - self.capture_until
         if self.capture_until and late > 0 and (late > 12 or not snipping_active()):
             self.capture_until = 0.0
-            user32.SetWindowDisplayAffinity(self.hwnd, 0x11)
-            self.glass.source.frozen = False
+            user32.SetWindowDisplayAffinity(self.hwnd, 0 if self.captureable else 0x11)
+            self.glass.source.frozen = self.captureable
             self.frame_dirty = True
 
     def quit(self):
-        if self.mon.controller.mode == "auto":
+        if self.gaming_hotkey_registered:
+            user32.UnregisterHotKey(self.hwnd, GAMING_HOTKEY)
+        self.gaming.shutdown()
+        if self.panel.options.get("fanrestore", True) and self.mon.controller.mode == "auto":
             self.mon.asus.set_mode("balanced")
         self.sound.shutdown()
         user32.UnhookWindowsHookEx(self._hook)
@@ -1873,6 +2106,15 @@ class App:
 
 
 if __name__ == "__main__":
+    # Importing the layout for tests must not acquire the live app's single-instance lock.
+    k32.CreateMutexW.restype = wintypes.HANDLE
+    _mutex = k32.CreateMutexW(None, False, "Local\\BlobTrayApp")
+    if k32.GetLastError() == 183:
+        sys.exit(0)
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except OSError:
+        pass
     try:
         App().run()
     except Exception:

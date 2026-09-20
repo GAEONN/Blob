@@ -15,6 +15,7 @@ import ctypes
 import math
 import time
 from ctypes import wintypes
+from functools import lru_cache
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -152,8 +153,17 @@ def squircle_field(w, h, r, smoothing=0.6):
     return res
 
 
+@lru_cache(maxsize=64)
 def shape_mask(w, h, r, smoothing=0.6):
-    return squircle_field(w, h, r, smoothing)[0]
+    # Artwork needs coverage only. Computing two 4x distance transforms and normals
+    # here used hundreds of MB and stalled the UI for an otherwise simple mask.
+    w, h = max(2, int(w)), max(2, int(h))
+    k = 4
+    hi = Image.new("L", (w * k, h * k), 0)
+    ImageDraw.Draw(hi).polygon([(x * k, y * k) for x, y in squircle_polygon(w, h, r, smoothing)], fill=255)
+    cov = np.asarray(hi.resize((w, h), Image.BOX), np.float32) / 255
+    cov.setflags(write=False)
+    return cov
 
 
 # ─────────────────────────── GPU glass renderer ───────────────────────────
@@ -475,6 +485,11 @@ class ScreenSource:
             gdi_grab(self.screen_dc, x, y, w, h, out)
             return True
         sx0, sy0, sx1, sy1 = max(x, l), max(y, t), min(x + w, r), min(y + h, b)
+        if (sx0, sy0, sx1, sy1) != (x, y, x + w, y + h):
+            # A single DXGI output cannot fill a region crossing monitors. Do not
+            # leave the other monitor's pixels stale in the capture buffer.
+            gdi_grab(self.screen_dc, x, y, w, h, out)
+            return True
         f = None
         if sx1 > sx0 and sy1 > sy0:
             try:
@@ -490,15 +505,19 @@ class ScreenSource:
         return False
 
 
-_gdi_dib = {}
+_gdi_dib = None
 
 
 def gdi_grab(screen_dc, x, y, w, h, out):
-    d = _gdi_dib.get((w, h))
-    if d is None:
-        d = _gdi_dib[(w, h)] = Dib(w, h)
+    global _gdi_dib
+    d = _gdi_dib
+    if d is None or d.w < w or d.h < h:
+        replacement = Dib(max(w, d.w if d else 0), max(h, d.h if d else 0))
+        if d is not None:
+            d.free()
+        d = _gdi_dib = replacement
     gdi32.BitBlt(d.dc, 0, 0, w, h, screen_dc, x, y, 0x00CC0020)
-    out[:h, :w] = d.arr
+    out[:h, :w] = d.arr[:h, :w]
 
 
 class GlassRenderer:
@@ -518,6 +537,7 @@ class GlassRenderer:
         self.source = ScreenSource()
         self.dump_path = None
         self._last_key = None
+        self.stats = {}
         self.ctx = moderngl.create_standalone_context()
         self.prog = self.ctx.program(vertex_shader=VERT, fragment_shader=FRAG)
         vbo = self.ctx.buffer(np.array([-1, -1, 3, -1, -1, 3], np.float32).tobytes())
@@ -549,9 +569,6 @@ class GlassRenderer:
 
     def panel_y(self, h):
         return self.H - self.sp - h
-
-    def panel_x(self, w):
-        return self.W - self.sp - int(round(w))   # right-aligned, so a narrower panel stays in the corner
 
     def panel_x(self, w):
         return self.W - self.sp - int(round(w))   # right-aligned, so a narrower panel stays in the corner
@@ -679,7 +696,13 @@ class GlassRenderer:
         pr["light"].value = tuple(float(v) for v in light)
         pr["glassiness"].value = float(glassiness)
         self.fbo.use()
+        self.ctx.scissor = None
+        self.fbo.clear(0, 0, 0, 0)
+        # Don't shade the tall unused portion of the fixed window buffer, especially
+        # when showing the short Gaming strip.
+        self.ctx.scissor = (max(0, px - sp), max(0, py - sp), min(self.W, pw + 2 * sp), min(self.H, h + 2 * sp))
         self.vao.render(mode=self.ctx.TRIANGLES)
+        self.ctx.scissor = None
         d = self.dib
         self.fbo.read_into(d.arr, components=4, alignment=1)
         t1 = time.perf_counter()

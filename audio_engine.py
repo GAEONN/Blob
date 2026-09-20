@@ -5,7 +5,7 @@ run EQ → bass → clarity → surround → boost → loudness compressor → l
 play it on the real output device (held at 100 %; your volume slider lives on the cable).
 Parameters and the spectrum are exchanged through shared memory.
 
-usage: pythonw audio_engine.py "<output device name>" "<output endpoint id>"
+usage: pythonw audio_engine.py "<output device name>" "<output endpoint id>" "<shared memory name>"
 """
 import math
 import sys
@@ -166,7 +166,7 @@ def restore_default(endpoint_id):
 
 def main():
     out_name, out_id = sys.argv[1], sys.argv[2]
-    shm = shared_memory.SharedMemory(name=SHM_NAME)
+    shm = shared_memory.SharedMemory(name=sys.argv[3] if len(sys.argv) > 3 else SHM_NAME)
     eng = Engine(shm)
     p = eng.p
     try:

@@ -6,3 +6,6 @@ venv/
 *.tmp.png
 @AutomationLog.txt
 frame*.png
+tools/PresentMon*.exe
+tools/PresentMon-download.tmp
+.impeccable/review/
