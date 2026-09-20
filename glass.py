@@ -192,6 +192,7 @@ uniform float fade;                   // 0 = previous content, 1 = current
 uniform vec2 bg_size, cap_origin;     // window px + cap_origin = bg px
 uniform vec2 panel_pos, panel_size;   // panel rect in window px
 uniform float panel_r;
+uniform float panel_morph;            // 0 card, 1 hardware mode bubble; continuous during transition
 uniform vec2 light;
 uniform float S, glassiness;
 uniform int n_lens;
@@ -226,6 +227,30 @@ float sdShape(vec2 p, vec2 c, vec2 hs, float r, float n) {
     vec2 qp = max(q, vec2(0.0)) / max(r, 1e-3);
     float corner = r * pow(pow(qp.x, n) + pow(qp.y, n) + 1e-12, 1.0 / n);
     return corner + min(max(q.x, q.y), 0.0) - r;
+}
+
+float sdPanel(vec2 p) {
+    vec2 c = panel_size * 0.5;
+    float card = sdShape(p, c, c, panel_r * SQUIRCLE_K, SQUIRCLE_N);
+    // A smoothly fused 78 px mode body and 43 px restore satellite. The ratios
+    // match Panel.BUBBLE_W/H. Relative centres let the two lobes emerge while
+    // the card is contracting instead of appearing only after the resize.
+    float u = min(panel_size.x / 104.0, panel_size.y / 98.0);
+    vec2 main_c = panel_size * vec2(43.0 / 104.0, 55.0 / 98.0);
+    vec2 nub_c = panel_size * vec2(79.5 / 104.0, 22.5 / 98.0);
+    float a = length(p - main_c) - 39.0 * u;
+    float b = length(p - nub_c) - 21.5 * u;
+    float k = 9.0 * u;
+    float h = max(k - abs(a - b), 0.0) / max(k, 1e-3);
+    float bubble = min(a, b) - h * h * k * 0.25;
+    float t = smoothstep(0.0, 1.0, clamp(panel_morph, 0.0, 1.0));
+    return mix(card, bubble, t);
+}
+
+vec2 nPanel(vec2 p) {
+    vec2 g = vec2(sdPanel(p + vec2(0.5, 0.0)) - sdPanel(p - vec2(0.5, 0.0)),
+                  sdPanel(p + vec2(0.0, 0.5)) - sdPanel(p - vec2(0.0, 0.5)));
+    return g / max(length(g), 1e-5);
 }
 vec2 nShape(vec2 p, vec2 c, vec2 hs, float r, float n) {
     vec2 g = vec2(sdShape(p + vec2(0.5, 0.0), c, hs, r, n) - sdShape(p - vec2(0.5, 0.0), c, hs, r, n),
@@ -303,9 +328,9 @@ void main() {
     vec2 w = gl_FragCoord.xy;
     vec2 pp = w - panel_pos;                         // panel-local px
     vec2 pc = panel_size * 0.5;
-    float sdP = sdShape(pp, pc, pc, panel_r * SQUIRCLE_K, SQUIRCLE_N);
+    float sdP = sdPanel(pp);
     float mask = clamp(0.5 - sdP / 1.3, 0.0, 1.0);
-    float sdS = sdShape(pp - vec2(0.0, 8.0 * S), pc, pc, panel_r * SQUIRCLE_K, SQUIRCLE_N);
+    float sdS = sdPanel(pp - vec2(0.0, 8.0 * S));
     float shadow = 0.30 * (1.0 - smoothstep(-12.0 * S, 20.0 * S, sdS));
     if (mask <= 0.0) { frag = vec4(0.0, 0.0, 0.0, shadow); return; }
 
@@ -315,7 +340,7 @@ void main() {
     float rim = 0.0, face = 0.0, glow = 0.0;
     vec3 tint = vec3(0.0); float tint_a = 0.0;
 
-    vec2 nP = nShape(pp, pc, pc, panel_r * SQUIRCLE_K, SQUIRCLE_N);
+    vec2 nP = nPanel(pp);
     float depth = max(-sdP, 0.0);
     float t = clamp(1.0 - depth / (28.0 * S), 0.0, 1.0) * clamp(0.5 - sdP, 0.0, 1.0);
     d += nP * (32.0 * S) * pow(t, 2.2);
@@ -556,6 +581,7 @@ class GlassRenderer:
         self.prog["bg_size"].value = (self.cap.shape[1], self.cap.shape[0])
         self.prog["S"].value = float(scale)
         self.prog["panel_r"].value = float(34 * scale)
+        self.prog["panel_morph"].value = 0.0
         self.prog["viz_alpha"].value = 0.0
         self.prog["n_lens"].value = 0
         self.prog["ambient"].value = (0.0, 0.0, 0.0, 0.0)
@@ -615,6 +641,9 @@ class GlassRenderer:
         self.accs[1].write(acc_a.tobytes())
         self.pics[1].write(pic_a.tobytes())
         self._last_key = None
+
+    def set_panel_shape(self, morph):
+        self.prog["panel_morph"].value = float(max(0.0, min(1.0, morph)))
 
     def set_supersample(self, ss):
         self.prog["ink_ss"].value = float(ss)

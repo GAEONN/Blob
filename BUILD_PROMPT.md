@@ -1,6 +1,6 @@
 # Build prompt — paste this into a fresh AI coding agent
 
-You are building **Blob**, a Windows desktop app. Work on a Windows 11 machine with Python 3.13.
+You are building **Blob**, a Windows desktop app. Work on a Windows 11 machine with Python 3.10+.
 Build it incrementally, run it after every stage, and verify with real output — never assume a
 stage works because the code looks right.
 
@@ -13,7 +13,7 @@ a small pane made of **liquid glass**: it captures the live screen behind itself
 the GPU, so video and games bend through it in real time. The pane has four views, switched by a
 bar at the bottom:
 
-1. **Blob** — CPU/GPU temperatures, fan speeds, and fan-profile control on ASUS laptops.
+1. **Blob** — vendor-neutral, read-only CPU/GPU, memory, storage and fan monitoring.
 2. **Sound** — a system-wide audio enhancer: boost, EQ, bass, clarity, surround, with a spectrum.
 3. **Music** — a real Apple Music player: now playing, catalog search, queue, playlists.
 4. **Settings** — grouped preferences.
@@ -104,24 +104,18 @@ pointer melts into it. Moving away stretches a short thick neck and drags the co
 past ~15 px the neck snaps and the control springs back. Keep it **thick**: it is liquid glass, not
 water. If it looks like it could drip, the springs are too loose.
 
-## Stage 3 — Sensors and fans (ASUS first, then everyone else)
+## Stage 3 — Vendor-neutral hardware monitoring
 
-* **ASUS laptops**: open `\\.\ATKACPI` and `DeviceIoControl` with code `0x0022240C`. Method `DSTS`
-  (`0x53545344`) reads, `DEVS` (`0x53564544`) writes; subtract `0x10000` from results. IDs: CPU fan
-  `0x00110013`, GPU fan `0x00110014` (value × 100 = RPM), CPU temp `0x00120094`, performance mode
-  `0x00120075` (0 balanced, 1 turbo, 2 silent). Fan curves live at `0x00110024/25`. No admin needed.
+* Use Windows performance counters for CPU/GPU load and clocks, psutil for memory/battery, and
+  storage IOCTLs for NVMe temperatures. Monitoring is read-only; do not ship OEM fan/power control.
 * **NVIDIA**: NVML (`nvml.dll`) for temperature, load, power, clocks. Only call it while the GPU is
   awake — check the PnP power state through `cfgmgr32` first, or you keep the dGPU from sleeping and
   drain the battery.
-* **Everyone else**: read **LibreHardwareMonitor** over WMI (`root\LibreHardwareMonitor`) or
+* Read **LibreHardwareMonitor** over WMI (`root\LibreHardwareMonitor`) or
   **HWiNFO** from its shared memory (`Global\HWiNFO_SENS_SM2`: header, then fixed-size reading
   structs; values are 8-byte aligned — mind the padding). CPUID HWMonitor exposes nothing. Last
   resort: the `\Thermal Zone Information(*)\Temperature` performance counter, which always works.
-* **Also**: NVMe temperature via `IOCTL_STORAGE_QUERY_PROPERTY` (property 52), CPU clock from
-  `\Processor Information(_Total)\% Processor Performance` × base clock, battery via psutil.
-* **Auto fan mode**: pick Silent / Balanced / Turbo from smoothed load and temperature, with
-  hysteresis — ramp up in ~6 s, calm down in ~25 s — and never go above Balanced on battery.
-* Where the hardware can't do something, **hide the control and say why in one line**. Never show a
+* Where Windows cannot expose something, **say what optional provider enables it**. Never show a
   dead button or a row of dashes.
 
 ## Stage 4 — Sound
@@ -162,16 +156,23 @@ every COM/device call on a worker thread.
 
 ## Stage 6 — The pane itself
 
-* **Layout**: 340 px wide (248 in compact), bottom-right of the work area, draggable to pin anywhere.
+* **Layout**: page-specific forms anchored bottom-right and draggable to pin anywhere.
   Fonts: Segoe UI Variable (Display Semibold for numbers, Text for body), Segoe Fluent Icons for
   glyphs, Segoe UI Emoji as fallback — playlist names contain emoji.
 * **Nested corners follow one rule**: `outer radius = inner radius + padding`. Pane 34, artwork inset
   22 → 12, and so on.
-* **Compact size** for a screen corner while gaming: condensed temperatures, a mini player, boost and
-  the spectrum.
+* Avoid a universal Regular/Compact switch. Music rests as a 340 px Apple Music-style mini player;
+  hovering its cover reveals an expand affordance. Expanded artwork reveals its metadata, timeline,
+  transport and collapse control only while hovered.
+* Hardware owns a contextual 104 × 98 mode bubble instead of inheriting the universal compact
+  layout. Its card affordance is one unmarked glass circle. The card's width, height, crossfaded
+  content and signed-distance silhouette must spring continuously into the bubble, which is the
+  smooth union of a large cycle target and a smaller restore satellite.
+  Its body cycles Auto → Quiet → Balanced → Turbo; Custom stays on the full card. The card
+  exposes a five-mode selector and a single chevron for the bounded, scrollable sensor inventory.
 * **The view switcher rests as a small pill** with the current view's name and springs open into the
-  four options when the pointer reaches it.
-* **Settings** grouped by area (Appearance, Music, Sound, Fans, System), scrollable with the wheel,
+  five options when the pointer reaches it.
+* **Settings** grouped by area (Appearance, Music, Sound, Hardware, System), scrollable with the wheel,
   with a switch for every customization, including one that makes the pane visible to screen
   recorders (which necessarily freezes the glass).
 * Transport marks (play, pause, skip, shuffle, repeat) are drawn as **solid shapes**, not font glyphs.
@@ -189,7 +190,7 @@ You cannot see the screen, so build the instrumentation first:
   capture hover, press and mid-animation states without touching the mouse.
 * Test the audio chain offline (feed a synthetic signal through the DSP and measure loudness and
   peak) before testing it live, and test binary parsers against a synthetic block you build yourself.
-* Simulate other hardware with flags that disable the ASUS and NVIDIA paths.
+* Simulate Intel-, AMD- and NVIDIA-only hardware paths and missing optional providers.
 
 ## Traps that will cost you hours
 

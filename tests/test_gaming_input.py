@@ -14,10 +14,11 @@ class GamingInputTests(unittest.TestCase):
         a = self.app
         a.hwnd, a.cur_arrow = 101, 202
         a.panel = NS(page="gaming", tabs_open=True)
-        a.visible, a.gaming_unlocked = True, False
+        a.visible, a.gaming_unlocked, a.gaming_modifier_drag = True, False, False
         a.drag, a.slider_drag, a.pressed = (10, 10), None, "tabs"
         a.hover, a.mouse_xy, a.mouse_in = "tabs", (12, 12), True
         a.attached, a.detaching = "tabs", None
+        a.cur_move = 303
         a.icon = Mock()
         self.patcher = patch.object(blob, "user32")
         self.u = self.patcher.start()
@@ -52,6 +53,41 @@ class GamingInputTests(unittest.TestCase):
         self.app.toggle_gaming_input()
         self.assertTrue(self.app.gaming_locked)
         self.assertFalse(self.app.panel.tabs_open)
+
+    def test_ctrl_alt_temporarily_enables_drag_without_unlocking(self):
+        a = self.app
+        a.drag, a.pos, a.captureable = None, [100, 80], False
+        a.pinned, a.vel, a.last_frame = False, blob.np.zeros(2), 0
+        a.frame = Mock()
+        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk in (0x11, 0x12) else 0
+
+        a.update_gaming_modifier_drag()
+
+        self.assertTrue(a.gaming_drag_active)
+        self.assertFalse(a.gaming_unlocked)
+        self.u.SetWindowLongPtrW.assert_called_once_with(101, -20, self.base | blob.WS_EX_NOACTIVATE)
+        with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (170, 130)]):
+            self.assertEqual(a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0), 0)
+            self.assertEqual(a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0), 0)
+        self.assertEqual(a.pos, [140, 110])
+        self.assertTrue(a.pinned)
+        self.u.SetCapture.assert_called_once_with(101)
+
+        self.assertEqual(a.wndproc(101, blob.WM_LBUTTONUP, 0, 0), 0)
+        self.assertIsNone(a.drag)
+        self.u.ReleaseCapture.assert_called_once()
+
+    def test_releasing_ctrl_alt_restores_click_through(self):
+        self.app.gaming_modifier_drag = True
+        self.app.drag = (10, 10)
+        self.u.GetAsyncKeyState.return_value = 0
+
+        self.app.update_gaming_modifier_drag()
+
+        self.assertFalse(self.app.gaming_modifier_drag)
+        self.assertIsNone(self.app.drag)
+        self.u.SetWindowLongPtrW.assert_called_once_with(
+            101, -20, self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE)
 
     def test_other_views_regain_normal_input(self):
         self.u.GetWindowLongPtrW.return_value = self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE

@@ -202,6 +202,18 @@ the window to capture animation states without touching the mouse.
 
 ## Components
 
+### Hardware card and mode bubble
+
+The first view is named **Hardware**, not Blob. Its 340 DIP card keeps CPU/GPU thermals and the first
+two fan readings above the fold, followed by a five-part mode track. One context chevron expands a
+bounded, scrollable inventory that also includes every discovered fan. One unmarked top-right circle
+morphs the view into a 104 × 98 DIP mode bubble. Width, height, content and the signed-distance
+silhouette spring together rather than swapping at either endpoint. The shader draws the final outline as the smooth union of a
+78 DIP cycle body and a 43 DIP restore satellite; it is not a rounded-rectangle approximation.
+Bubble clicks cycle Auto → Quiet → Balanced → Turbo. Custom is intentionally excluded because
+it requires the full card. A selected preference must be labeled monitoring-only whenever no real
+fan-profile backend reports an active mode.
+
 ### Gaming strip and Playing Next extension
 
 This addition describes the native extension in `blob.pyw`, `gaming.py` and

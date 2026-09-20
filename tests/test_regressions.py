@@ -31,13 +31,13 @@ def fixtures():
                 gpu=dict(temp=74, load=35, power=45, state="active"),
                 fans=[dict(rpm=4300), dict(rpm=4100)],
                 control=dict(mode="auto", active="balanced", reason="CPU load is stable"),
-                caps=dict(fan_control=True, nvidia=True), cpu_source="asus",
+                caps=dict(nvidia=True, fans_readable=True), cpu_source="hwmonitor",
                 sensors=[dict(name="Very long motherboard temperature sensor label " + str(i),
                               value=42, unit="°C", temp=True) for i in range(40)],
                 power=dict(battery=81, plugged=True))
     sound = NS(enabled=True, boost=.5, boost_db=7.5, bass=.3, clarity=.3, surround=.25,
                preset="music", output="Speakers (Very Long USB Audio Device Name)",
-               fx_conflict=False, error="", volume=.65, spectrum=np.zeros(28))
+               cable=True, fx_conflict=False, error="", volume=.65, spectrum=np.zeros(28))
     media = NS(active=True, title="A very long song title to test clipping", artist="An artist",
                album="An album", source="Apple Music", playing=True, duration=300,
                pos_now=lambda: 42, art=Image.new("RGB", (256, 256), (165, 75, 42)))
@@ -72,8 +72,7 @@ class LayoutTests(unittest.TestCase):
         p = RecordingPanel(scale)
         p.set_compact(compact)
         p.page, p.music_view, p.am = page, view, self.am
-        p.hw_note = ("No ASUS fan interface: modes hidden.\n"
-                     "Using the ACPI sensor. LibreHardwareMonitor or HWiNFO adds CPU and fan sensors.")
+        p.hw_note = "CPU, GPU and fan sensors come from LibreHardwareMonitor."
         return p
 
     def draw(self, p, **kwargs):
@@ -106,7 +105,7 @@ class LayoutTests(unittest.TestCase):
                         self.assert_bounds(p)
 
     def test_settings_labels_clear_toggles_and_all_controls_reachable(self):
-        expected = {"backdrop", "queueart", "artclick", "soundstart", "fanrestore", "startup", "capture"}
+        expected = {"backdrop", "queueart", "soundstart", "startup", "capture"}
         for compact in (False, True):
             p, seen = self.panel(compact=compact, page="settings"), set()
             for row in range(20):
@@ -122,6 +121,44 @@ class LayoutTests(unittest.TestCase):
                         self.assertLessEqual(box[3], p.ink.height - 78 * p.S)
             self.assertEqual(seen, expected)
 
+    def test_music_uses_contextual_size_and_no_universal_size_control(self):
+        sizes = set()
+        for compact in (False, True):
+            p = self.panel(compact=compact, page="music", view="now")
+            p.tabs_t = 0
+            self.draw(p)
+            sizes.add((p.w, p.height(self.snap)))
+            self.assertFalse(any(k.startswith("size:") for k in p.rects))
+        self.assertEqual(len(sizes), 1)
+
+        p = self.panel(page="music", view="art")
+        self.draw(p)
+        self.assertGreater(p.height(self.snap), next(iter(sizes))[1])
+        self.assertNotIn("tabs", p.rects)
+
+    def test_missing_audio_driver_has_setup_action_in_both_sizes(self):
+        self.sound.cable = False
+        for compact in (False, True):
+            p = self.panel(compact=compact, page="sound")
+            self.draw(p)
+            self.assertIn("setupaudio", p.rects)
+            self.assert_bounds(p)
+
+    def test_screenshot_setting_is_explicit(self):
+        p = self.panel(page="settings")
+        seen = []
+        for row in range(20):
+            p.scroll["settings"] = row
+            self.draw(p)
+            seen.extend(t for t, _ in p.labels)
+        self.assertTrue(any("screenshots" in text for text in seen))
+        self.assertTrue(any("recordings" in text for text in seen))
+
+    def test_empty_snapshot_keeps_panel_renderable_during_discovery(self):
+        p = self.panel()
+        p.draw(blob.empty_snapshot(), self.sound, .35, False, media=self.media)
+        self.assert_bounds(p)
+
     def test_sensor_list_bounded_and_scrollable(self):
         p = self.panel()
         p.details_open = True
@@ -134,12 +171,49 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("Battery", [t for t, _ in p.labels])
         self.assertNotEqual(first, [t for t, _ in p.labels])
 
+    def test_hardware_tab_uses_contextual_card_and_mode_bubble(self):
+        self.assertEqual(dict(blob.PAGES)["blob"], "Hardware")
+        p = self.panel(page="blob")
+        self.draw(p)
+        self.assertIn("hview:bubble", p.rects)
+        self.assertIn("details", p.rects)
+        bubble_parts = [c for c in p.controls if c[0] == "hover" and c[1] == "hview:bubble"]
+        self.assertEqual(len(bubble_parts), 1)
+        box = p.rects["hview:bubble"]
+        self.assertAlmostEqual(box[2] - box[0], box[3] - box[1])
+        self.assertEqual({k.split(":", 1)[1] for k in p.rects if k.startswith("hmode:")},
+                         {"auto", "quiet", "balanced", "performance", "custom"})
+        for mode, label in blob.HARDWARE_MODES:
+            box = p.rects["hmode:" + mode]
+            self.assertLessEqual(p.text_font(label, 11).getlength(label), box[2] - box[0] - 4 * p.S)
+
+        p.tabs_open, p.tabs_t = True, 1
+        self.draw(p)
+        self.assertNotIn("details", p.rects)
+
+        p.hardware_view = "bubble"
+        self.draw(p)
+        self.assertEqual(p.w, p.BUBBLE_W * p.S)
+        self.assertEqual(p.height(self.snap), p.BUBBLE_H * p.S)
+        self.assertIn("hcycle", p.rects)
+        self.assertIn("hview:card", p.rects)
+        self.assertNotIn("tabs", p.rects)
+        self.assert_bounds(p)
+
+    def test_hardware_details_include_discovered_fans(self):
+        self.snap["fans"] = [dict(name="Front intake", rpm=820), dict(name="AIO pump", rpm=2100)]
+        rows = self.panel().detail_rows(self.snap)
+        self.assertIn(("Front intake", "820 rpm", None), rows)
+        self.assertIn(("AIO pump", "2,100 rpm", None), rows)
+
     def test_transport_does_not_intersect_seek_artwork_or_switcher(self):
         for compact in (False, True):
             for view in ("now", "art"):
                 for tabs in (0, 1):
                     p = self.panel(compact=compact, page="music", view=view)
                     p.tabs_t = tabs
+                    if view == "art":
+                        p.hover_key = "arthover"
                     self.draw(p)
                     relevant = [(k, b) for k, b in p.rects.items()
                                 if k.startswith(("media:", "am:", "page:", "slider:seek")) or
@@ -150,8 +224,32 @@ class LayoutTests(unittest.TestCase):
 
     def test_art_view_displays_seek_preview(self):
         p = self.panel(page="music", view="art")
+        p.hover_key = "arthover"
         self.draw(p, seek=.75)
         self.assertEqual(next(c[-1] for c in p.controls if c[:2] == ("slider", "seek")), .75)
+
+    def test_artwork_hover_reveals_contextual_controls(self):
+        p = self.panel(page="music", view="art")
+        self.draw(p)
+        self.assertIn("arthover", p.rects)
+        self.assertNotIn("media:toggle", p.rects)
+        p.hover_key = "arthover"
+        self.draw(p)
+        self.assertIn("mview:now", p.rects)
+        self.assertIn("media:toggle", p.rects)
+        self.assertNotIn("tabs", p.rects)
+
+    def test_artwork_hover_overlay_preserves_all_four_rounded_corners(self):
+        p = self.panel(page="music", view="art")
+        p.hover_key = "arthover"
+        self.draw(p)
+        pad = round(p.pad_u * p.S)
+        side = round(p.w - 2 * pad)
+        for point in ((pad, round(p.CONTENT * p.S)),
+                      (pad + side - 1, round(p.CONTENT * p.S)),
+                      (pad, round(p.CONTENT * p.S) + side - 1),
+                      (pad + side - 1, round(p.CONTENT * p.S) + side - 1)):
+            self.assertEqual(p.pic.getpixel(point)[3], 0, point)
 
     def test_list_status_clears_bottom_navigation(self):
         for compact in (False, True):
@@ -252,7 +350,74 @@ class RendererTests(unittest.TestCase):
             cam.grab.assert_not_called()
 
 
+class HardwareTests(unittest.TestCase):
+    def test_rest_sensor_tree_extracts_temperatures_and_named_fans(self):
+        provider = blob.engine.HardwareMonitorWMI()
+        tree = {"Children": [{"Text": "CPU", "Children": [
+            {"Text": "CPU Package", "Type": "Temperature", "SensorId": "/cpu/0/temperature/0",
+             "RawValue": "47.5"},
+            {"Text": "CPU Fan", "Type": "Fan", "SensorId": "/lpc/0/fan/0",
+             "Value": "1,280 RPM"},
+        ]}]}
+        rows = provider._rest_sensors(tree)
+        self.assertEqual([row["Name"] for row in rows], ["CPU Package", "CPU Fan"])
+        self.assertEqual([row["Value"] for row in rows], [47.5, 1280.0])
+
+    def test_sensor_provider_uses_installed_elevated_task_with_cooldown(self):
+        provider = blob.engine.HardwareMonitorWMI()
+        with patch.object(blob.engine.time, "time", side_effect=[100, 110, 131]), \
+             patch.object(blob.engine.subprocess, "run") as run:
+            provider.start_installed_provider()
+            provider.start_installed_provider()
+            provider.start_installed_provider()
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.args[0], ["schtasks", "/Run", "/TN", "Blob Sensors"])
+
+    def test_non_nvidia_adapter_is_primary_gpu(self):
+        mon = blob.engine.Monitor.__new__(blob.engine.Monitor)
+        tag = "0x00000000_0x00000001"
+        mon.adapters = [(tag, "AMD Radeon RX 7800 XT")]
+        mon.pdh = NS(values=lambda key: {
+            f"pid_1_luid_{tag}_phys_0_eng_0_engtype_3D": 73.0
+        })
+        primary, secondary = mon.gpu_loads()
+        self.assertEqual(primary, 73.0)
+        self.assertIsNone(secondary)
+
+
 class LifecycleTests(unittest.TestCase):
+    def test_hardware_view_change_springs_geometry_and_shape(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = blob.Panel(1)
+        app.snap = fixtures()
+        app.springs = blob.Springs()
+        old_width, old_height = app.panel.w, app.panel.height(app.snap)
+        app.springs.get("width", old_width, k=185, zeta=.86)
+        app.springs.get("height", old_height, k=260, zeta=.82)
+        app.springs.get("hardware_morph", 0, k=155, zeta=.82)
+        with patch.object(blob.engine, "load_config", return_value={}), \
+             patch.object(blob.engine, "save_config"):
+            app.set_hardware_view("bubble")
+        self.assertEqual(app.springs["width"].x, old_width)
+        self.assertEqual(app.springs["height"].x, old_height)
+        self.assertEqual(app.springs["width"].target, blob.Panel.BUBBLE_W * app.panel.S)
+        self.assertEqual(app.springs["height"].target, blob.Panel.BUBBLE_H * app.panel.S)
+        self.assertEqual(app.springs["hardware_morph"].x, 0)
+        self.assertEqual(app.springs["hardware_morph"].target, 1)
+
+    def test_hardware_bubble_cycles_only_quick_modes(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = blob.Panel(1)
+        with patch.object(blob.engine, "load_config", return_value={}), \
+             patch.object(blob.engine, "save_config"):
+            seen = []
+            for _ in range(5):
+                app.cycle_hardware_mode()
+                seen.append(app.panel.hardware_mode)
+        self.assertEqual(seen, ["quiet", "balanced", "performance", "auto", "quiet"])
+        self.assertNotIn("custom", seen)
+        self.assertEqual(dict(blob.HARDWARE_MODES)["performance"], "Turbo")
+
     def test_audio_launches_have_separate_shared_buffers(self):
         with patch.object(sound.threading, "Thread"), patch.object(sound.core, "load_config", return_value={}):
             first, second = sound.Sound(), sound.Sound()

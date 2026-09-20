@@ -8,4 +8,5 @@ venv/
 frame*.png
 tools/PresentMon*.exe
 tools/PresentMon-download.tmp
+tools/LibreHardwareMonitor/
 .impeccable/review/

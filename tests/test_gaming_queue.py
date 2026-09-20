@@ -29,6 +29,7 @@ class GamingLayoutTests(unittest.TestCase):
                         self.assertIn(metric, labels)
                     self.assertEqual(p.height(self.snap) / p.S, 142 if expanded else 86)
                     self.assertEqual(any(k.startswith("page:") for k in p.rects), expanded)
+                    self.assertFalse(any(k.startswith("size:") for k in p.rects))
 
     def test_missing_fps_is_not_faked(self):
         p = self.panel(page="gaming")

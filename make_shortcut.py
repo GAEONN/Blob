@@ -26,7 +26,7 @@ $s.TargetPath = '{pythonw}'
 $s.Arguments = '"{target}"'
 $s.WorkingDirectory = '{here}'
 $s.IconLocation = '{ico}'
-$s.Description = 'CPU / GPU temperatures, fans and fan profile control'
+$s.Description = 'Windows hardware, sound, music and gaming overlay'
 $s.Save()
 """
 subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)

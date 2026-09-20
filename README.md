@@ -3,7 +3,7 @@
 A liquid-glass control panel for Windows laptops. One small pane, drawn entirely by a GPU shader,
 that refracts the live desktop behind it — video, games, anything — and holds three things:
 
-* **Thermals** — CPU and GPU temperatures, fan speeds, and automatic fan-profile switching on ASUS laptops.
+* **Hardware** — CPU/GPU load, memory, battery, storage temperatures and optional read-only temperature/fan sensors on Windows PCs.
 * **Sound** — a system-wide audio enhancer: boost, EQ, bass, clarity and surround, with a glass spectrum.
 * **Music** — a real Apple Music player: now playing, catalog search, your playlists.
 
@@ -34,11 +34,17 @@ the traps involved in building this kind of window.
 
 ## What each page does
 
-**Thermals.** CPU temperature and fan RPM come from the ASUS ATKACPI interface (the one Armoury
-Crate uses), the GPU from NVML, the SSD from a storage IOCTL, the motherboard from a Windows
-performance counter. No admin rights, no kernel driver. *Auto* mode watches load and temperature
-and switches between the laptop's Silent / Balanced / Turbo profiles with hysteresis, so it ramps up
-quickly and calms down slowly. The tray icon shows the CPU temperature as a number.
+**Hardware.** Load, memory, battery, adapters, ACPI thermal zones and NVMe temperatures come from
+Windows. CPU/GPU temperatures and fan RPM have no vendor-neutral Windows API, so Blob reads them
+from LibreHardwareMonitor/OpenHardwareMonitor or HWiNFO when one is running. NVIDIA NVML adds
+power and clock data where available. Monitoring is read-only: Blob does not change firmware fan
+curves or power profiles. The Hardware card offers Auto, Quiet, Balanced, Turbo and Custom
+preferences while clearly marking them as monitoring-only until a fan-profile backend is connected.
+Its single-circle corner control smoothly contracts and reshapes the card into a fused glass mode
+bubble: clicking the body cycles the
+four quick modes, while the attached satellite restores the full card. Expanding the card's chevron
+shows every discovered fan RPM plus CPU/GPU load, clocks and power, storage, memory and battery.
+The tray icon shows the CPU temperature when one is available.
 
 **Sound.** Windows plays into a virtual cable; a separate process reads it back, runs EQ → bass →
 clarity → stereo width → loudness compressor → look-ahead limiter, and plays the result on the real
@@ -54,48 +60,68 @@ invisible. Resting the pointer on a result preloads it, which brings a click dow
 
 ## Sizes and the pointer
 
-**Regular** is the full pane. **Compact** (Settings → Size) is a narrow version for a screen
-corner while you play: temperatures and fan mode at a glance, a mini music player with artwork and
-transport, boost and the spectrum. Clicking the album art opens it as artwork only, Apple Music
-style; clicking it again goes back.
+Each page now chooses the form that fits its job instead of exposing a universal C/R switch. Music
+opens as an Apple Music-inspired horizontal mini player. Hovering its cover reveals the expand
+affordance; selecting it grows into a cover-first view. Hover the expanded cover to reveal metadata,
+timeline, transport and the collapse control that returns to the mini player.
 
-Settings also holds **Show in screen recordings**. Off (the default) keeps the pane invisible to
-capture so the glass can refract live. On makes it visible to recorders, at the cost of freezing
-the glass to the backdrop captured when it appeared, since it would otherwise refract itself.
+Settings also holds **Include Blob in screenshots and recordings**. Off (the default) keeps the
+pane invisible to capture so the glass can refract live. On makes it visible to capture tools, at
+the cost of freezing the glass to the backdrop captured when it appeared, since it would otherwise
+refract itself.
 
-## On other machines
+## Hardware compatibility
 
-Blob runs on any Windows 11 laptop; the parts that depend on hardware degrade instead of breaking.
+Blob is designed for Windows 11 PCs, not a particular laptop brand. Core load, memory, battery,
+storage, Sound, Music and glass features work without an OEM utility. Optional sensor coverage is:
 
-| Part | ASUS + NVIDIA | Anything else |
-| --- | --- | --- |
-| CPU temperature | ASUS ATKACPI | LibreHardwareMonitor or HWiNFO if one is running, otherwise the ACPI thermal zone |
-| Fan speeds | ATKACPI | LibreHardwareMonitor or HWiNFO, otherwise hidden |
-| Fan modes | Silent / Balanced / Turbo | hidden, with a line saying why |
-| GPU | NVML (temp, load, power) | NVML on any NVIDIA card; otherwise a hardware monitor for the temperature |
-| Sound, Music, glass | full | full |
+| Data | Source |
+| --- | --- |
+| CPU/GPU load | Windows performance counters on Intel, AMD and NVIDIA systems |
+| CPU/GPU temperature and fan RPM | LibreHardwareMonitor/OpenHardwareMonitor or HWiNFO shared memory |
+| NVIDIA temperature, power and clock | NVML, when available |
+| NVMe temperatures | Windows storage IOCTL |
 
-On an Intel or AMD CPU, run one of these in the background and Blob picks its sensors up by itself:
+The full installer provisions LibreHardwareMonitor as Blob's sensor provider and starts it minimized
+through an elevated logon task, so it can read supported sensors without showing a UAC prompt on
+every launch. Blob also detects these providers when the user already runs one:
 
 * [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) — read over WMI, nothing to configure.
 * [HWiNFO](https://www.hwinfo.com/) — read from its shared memory; switch on *Settings → Shared Memory Support*.
 
 CPUID **HWMonitor** is not usable: it shows sensors but offers nothing for other programs to read.
-The Settings page names whichever source Blob ended up using. The Sound page needs
-[VB-Audio Virtual Cable](https://vb-audio.com/Cable/) and says so if it's missing.
+The Settings page names whichever source Blob ended up using.
 
 ## Requirements
 
 * Windows 11, a GPU with OpenGL 3.3
-* Python 3.13
-* For fan control: an ASUS laptop with the ATKACPI driver (ships with ASUS System Control Interface)
-* For the sound page: [VB-Audio Virtual Cable](https://vb-audio.com/Cable/)
-* For the music page: the Apple Music app from the Microsoft Store
+* Python 3.10–3.13 (the installer creates an isolated environment)
+* Administrator approval for the optional sensor and audio drivers
 
+Fresh install or update, including Python when needed, dependencies, the FPS helper,
+LibreHardwareMonitor/PawnIO sensors, VB-CABLE audio, desktop shortcut, verification and launch:
+
+```powershell
+irm https://raw.githubusercontent.com/alonsoglunac-debug/Blob/main/install.ps1 | iex
 ```
-pip install -r requirements.txt
-python make_shortcut.py    # builds the icon and a desktop shortcut
+
+From an existing checkout:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+Or double-click **Install Blob.cmd** in the checkout.
+
+The installer uses one elevated system phase. LibreHardwareMonitor and PresentMon are downloaded
+from their official releases and SHA-256 verified. For audio, Blob downloads and verifies the
+official VB-Audio package, then shows its original signed setup window; select **Install Driver**.
+VB-Audio requires a Windows restart before Sound is ready. Music does not install or require Apple
+Music: Spotify, YouTube, browsers and other Windows media sessions work normally. Apple Music only
+adds its optional catalog search and Playing Next integrations when already installed.
+
+For a deliberately partial installation, the local script accepts `-SkipAudio`, `-SkipSensors`,
+`-SkipPresentMon`, and `-NoLaunch`. Re-running the installer is safe and repairs missing components.
 
 Then run `blob.pyw` (or use the shortcut). It lives in the tray; click the temperature to open the
 pane, drag the pane to pin it anywhere, press Esc to dismiss it.
@@ -106,7 +132,7 @@ pane, drag the pane to pin it anywhere, press Esc to dismiss it.
 | --- | --- |
 | `glass.py` | The renderer: capture, shader, squircle geometry, layered-window output |
 | `blob.pyw` | App shell: window, springs, controls, pointer, pages, input |
-| `engine.py` | Sensors and the fan-profile controller |
+| `engine.py` | Vendor-neutral Windows hardware monitoring |
 | `sound.py` / `audio_engine.py` | Audio routing and the DSP process |
 | `media.py` | Windows now-playing |
 | `applemusic.py` | Apple Music search and playback |
@@ -117,14 +143,15 @@ To refract the live screen the window has to exclude itself from screen capture,
 refract its own previous frame. A keyboard hook makes screenshots (PrtSc, Win+Shift+S) work anyway
 by briefly dropping that exclusion. Screen recorders still won't see the pane.
 
-Written for one laptop (an ASUS TUF A14) and generalised where it was cheap to do so. Sensor IDs,
-fan profiles and the Apple Music automation are the parts most likely to need adjusting elsewhere.
+Exact sensor availability varies because Windows has no standard temperature/fan API. Blob keeps
+the rest of the app usable while sensors are discovered and names the optional provider in Settings.
 
 ## Gaming strip and Playing Next
 
 Choose **Gaming** in Blob's view switcher for a draggable, always-on-top glass strip:
 FPS, frame time, CPU/GPU temperatures and utilization, RAM, fan RPM, and GPU power.
 Gaming opens **locked and click-through**: mouse clicks go to the game, not Blob.
+Hold **Ctrl+Alt** and drag anywhere on the strip to reposition it without unlocking.
 Press **Ctrl+Alt+G** to unlock/relock, or right-click Blob's tray icon and choose
 **Unlock gaming strip / Lock gaming strip** (also available if another app owns the shortcut).
 Unlocking expands navigation; drag a gap to reposition, then lock before playing.

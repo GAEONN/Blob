@@ -1,23 +1,25 @@
-"""Blob engine — sensor reading and fan-profile control
-for the ASUS TUF Gaming A14 (works on most ASUS laptops with the ATKACPI driver).
+"""Vendor-neutral Windows hardware monitoring for Blob.
 
-Sensors (no admin rights needed):
-  * CPU temperature + CPU/GPU fan RPM  -> ASUS ATKACPI driver (same interface Armoury Crate uses)
-  * NVIDIA GPU temp/load/power         -> NVML, only polled while the dGPU is already awake
-  * Motherboard ACPI thermal zone      -> Windows performance counters
-  * NVMe SSD temperatures              -> IOCTL_STORAGE_QUERY_PROPERTY
-Control:
-  * ASUS performance profiles (Silent / Balanced / Turbo), which switch the BIOS fan
-    curves + power limits. "Auto" picks the profile from live load and temperature.
+Windows exposes load, memory, battery, adapter and storage data directly.  CPU/GPU
+temperature and fan RPM have no vendor-neutral Windows API, so Blob consumes the
+read-only sensor feeds from LibreHardwareMonitor/OpenHardwareMonitor or HWiNFO when
+one is running.  NVIDIA NVML is used opportunistically for extra GPU data, but the
+application never depends on a particular laptop brand and does not change firmware
+fan or power profiles.
 """
 import ctypes
+import base64
+import hashlib
 import json
 import subprocess
 import os
+import re
 import struct
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.request
 import winreg
 from ctypes import wintypes
 
@@ -61,54 +63,6 @@ def ioctl(handle, code, inbuf, outlen):
     ret = wintypes.DWORD()
     ok = k32.DeviceIoControl(handle, code, inb, len(inbuf), out, outlen, ctypes.byref(ret), None)
     return out.raw[:ret.value] if ok else None
-
-
-# ─────────────────────────── ASUS ATKACPI ───────────────────────────
-class Asus:
-    DSTS, DEVS = 0x53545344, 0x53564544
-    CPU_FAN, GPU_FAN, CPU_TEMP, MODE = 0x00110013, 0x00110014, 0x00120094, 0x00120075
-    CPU_CURVE, GPU_CURVE = 0x00110024, 0x00110025
-    MODE_VALUE = {"balanced": 0, "turbo": 1, "silent": 2}
-    CURVE_ARG = {"balanced": 0, "silent": 1, "turbo": 2}  # ASUS swaps these for curve reads
-
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.h = open_device("\\\\.\\ATKACPI")
-        if not self.h:
-            log("ATKACPI not available")
-
-    def _call(self, method, args, outlen=16):
-        if not self.h:
-            return None
-        with self.lock:
-            return ioctl(self.h, 0x0022240C, struct.pack("<II", method, len(args)) + args, outlen)
-
-    def get(self, dev):
-        r = self._call(self.DSTS, struct.pack("<II", dev, 0))
-        if not r or len(r) < 4:
-            return None
-        v = struct.unpack_from("<i", r)[0] - 65536
-        return v if v >= 0 else None
-
-    def fan_rpm(self, dev):
-        v = self.get(dev)
-        return None if v is None else v * 100
-
-    def set_mode(self, name):
-        r = self._call(self.DEVS, struct.pack("<II", self.MODE, self.MODE_VALUE[name]))
-        ok = bool(r) and struct.unpack_from("<i", r)[0] == 1
-        log(f"set mode {name}: {'ok' if ok else 'FAILED'}")
-        return ok
-
-    def curves(self):
-        out = {}
-        for mode, arg in self.CURVE_ARG.items():
-            out[mode] = {}
-            for fan, dev in (("cpu", self.CPU_CURVE), ("gpu", self.GPU_CURVE)):
-                r = self._call(self.DSTS, struct.pack("<II", dev, arg), 32)
-                if r and len(r) >= 16 and any(r[:8]):
-                    out[mode][fan] = [[r[i], r[8 + i]] for i in range(8)]
-        return out
 
 
 # ─────────────────────────── NVMe temperatures ───────────────────────────
@@ -322,106 +276,6 @@ def reg_str(path, name):
         return ""
 
 
-# ─────────────────────────── Fan-profile controller ───────────────────────────
-class Controller:
-    MODES = ("auto", "silent", "balanced", "turbo")
-    RANK = {"silent": 0, "balanced": 1, "turbo": 2}
-
-    def __init__(self, asus):
-        self.asus = asus
-        self.cfg = load_config()
-        self.mode = self.cfg.get("mode", "auto")
-        if self.mode not in self.MODES:
-            self.mode = "auto"
-        self.active = None  # profile currently applied to the BIOS
-        self.reason = ""
-        self.candidate, self.cand_since, self.last_switch = None, 0.0, 0.0
-        self.ema = {}
-        self.plugged = None
-        self.last_tick = time.time()
-        if self.mode != "auto":
-            self._apply(self.mode)
-
-    def _apply(self, profile):
-        if not self.asus.h:
-            return
-        if self.asus.set_mode(profile):
-            self.active = profile
-            self.last_switch = time.time()
-
-    def set_mode(self, mode):
-        if mode not in self.MODES:
-            return False
-        self.mode = mode
-        self.cfg["mode"] = mode
-        save_config(self.cfg)
-        self.candidate = None
-        if mode != "auto":
-            self._apply(mode)
-            self.reason = ""
-        else:
-            self.active = None  # next tick applies immediately
-        return True
-
-    def _smooth(self, key, value, alpha=0.18):
-        if value is None:
-            return self.ema.get(key)
-        prev = self.ema.get(key)
-        self.ema[key] = value if prev is None else prev + alpha * (value - prev)
-        return self.ema[key]
-
-    def tick(self, s):
-        now = time.time()
-        resumed = now - self.last_tick > 15  # woke from sleep
-        self.last_tick = now
-        cpu_load = self._smooth("cpu_load", s["cpu"]["load"])
-        cpu_temp = self._smooth("cpu_temp", s["cpu"]["temp"])
-        gpu_load = self._smooth("gpu_load", s["gpu"]["load"] if s["gpu"]["state"] == "active" else 0)
-        gpu_temp = s["gpu"]["temp"] if s["gpu"]["state"] == "active" else None
-        plugged = s["power"]["plugged"]
-        power_changed = self.plugged is not None and plugged != self.plugged
-        self.plugged = plugged
-
-        # Armoury Crate re-applies its own profile on AC/DC changes and resume; take it back.
-        if (power_changed or resumed) and self.active:
-            self._apply(self.active)
-
-        if self.mode != "auto":
-            return
-        cpu_load, cpu_temp, gpu_load = cpu_load or 0, cpu_temp or 0, gpu_load or 0
-        if cpu_temp >= 90 or (gpu_temp or 0) >= 83:
-            target, why = "turbo", "running hot"
-        elif gpu_load >= 40:
-            target, why = "turbo", "GPU busy"
-        elif cpu_load >= 55:
-            target, why = "turbo", "heavy CPU load"
-        elif cpu_load < 15 and gpu_load < 15 and cpu_temp < 72:
-            target, why = "silent", "light load"
-        else:
-            target, why = "balanced", "moderate load"
-        if not plugged and target == "turbo":
-            target, why = "balanced", "on battery"
-
-        if self.active is None:
-            self._apply(target)
-            self.reason = why
-            return
-        if target == self.active:
-            self.candidate = None
-            self.reason = why
-            return
-        if target != self.candidate:
-            self.candidate, self.cand_since = target, now
-        going_up = self.RANK[target] > self.RANK[self.active]
-        hold = 6 if going_up else 25  # ramp up fast, calm down slowly
-        if now - self.cand_since >= hold and now - self.last_switch >= 8:
-            self._apply(target)
-            self.candidate = None
-            self.reason = why
-        else:
-            self.reason = f"{why}, switching to {target.title()}…"
-
-
 # ─────────────────────────── Sampler ───────────────────────────
 class HWiNFOShared:
     """HWiNFO publishes every sensor in shared memory when "Shared Memory Support" is enabled:
@@ -483,15 +337,117 @@ class HardwareMonitorWMI:
 
     NAMESPACES = ((r"root\LibreHardwareMonitor", "LibreHardwareMonitor"),
                   (r"root\OpenHardwareMonitor", "OpenHardwareMonitor"))
+    REST_URL = "http://127.0.0.1:8085/data.json"
+    REST_AUTH = os.path.join(APP_DIR, "tools", "LibreHardwareMonitor", ".blob-http-auth.json")
 
     def __init__(self):
         self.namespace = None
         self.values = {}
         self.checked = 0.0
+        self.launch_checked = 0.0
+
+    @staticmethod
+    def _number(value):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        match = re.search(r"[-+]?\d[\d,.]*", str(value or ""))
+        if not match:
+            return None
+        text = match.group(0)
+        if "," in text and "." not in text:
+            tail = text.rsplit(",", 1)[1]
+            text = text.replace(",", "") if len(tail) == 3 else text.replace(",", ".")
+        else:
+            text = text.replace(",", "")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _rest_sensors(cls, tree):
+        rows = []
+
+        def visit(node):
+            kind = node.get("Type")
+            if kind in ("Temperature", "Fan") and node.get("SensorId"):
+                value = cls._number(node.get("RawValue"))
+                if value is None:
+                    value = cls._number(node.get("Value"))
+                if value is not None:
+                    rows.append({"Name": node.get("Text") or "Sensor", "SensorType": kind,
+                                 "Value": value, "Identifier": node.get("SensorId", "")})
+            for child in node.get("Children", []) or []:
+                if isinstance(child, dict):
+                    visit(child)
+
+        if isinstance(tree, dict):
+            visit(tree)
+        return rows
+
+    def poll_rest(self):
+        """Read current LHM through its authenticated local endpoint when WMI is unavailable."""
+        try:
+            # Windows PowerShell 5.1 writes UTF-8 JSON with a BOM.
+            with open(self.REST_AUTH, encoding="utf-8-sig") as f:
+                auth = json.load(f)
+            password = str(auth["password"])
+            # LHM 0.9.6 hashes the configured password on load, but writes that hash
+            # back on a graceful exit. Trying both forms keeps an upgraded or manually
+            # closed provider readable without exposing the endpoint unauthenticated.
+            passwords = (password, hashlib.sha256(password.encode()).hexdigest())
+            rows = None
+            for candidate in passwords:
+                token = base64.b64encode(
+                    f"{auth['username']}:{candidate}".encode()).decode()
+                request = urllib.request.Request(
+                    self.REST_URL,
+                    headers={"Authorization": "Basic " + token, "User-Agent": "Blob/1.0"})
+                try:
+                    with urllib.request.urlopen(request, timeout=2) as response:
+                        rows = self._rest_sensors(json.load(response))
+                    break
+                except urllib.error.HTTPError as error:
+                    if error.code != 401:
+                        raise
+            if rows is None:
+                return {}
+        except Exception:
+            return {}
+        temps = [r for r in rows if r["SensorType"] == "Temperature"]
+        fans = [r for r in rows if r["SensorType"] == "Fan" and r["Value"] >= 0]
+        # Put spinning fans first so the two at-a-glance card slots do not get
+        # consumed by a stopped header or a zero-RPM GPU fan.
+        fans.sort(key=lambda row: row["Value"] <= 0)
+
+        def pick(kind, *names):
+            candidates = [r for r in temps if kind in r["Identifier"].lower()]
+            return next((r["Value"] for r in candidates
+                         if any(name in r["Name"].lower() for name in names)),
+                        candidates[0]["Value"] if candidates else None)
+
+        cpu = pick("cpu", "package", "core max", "tctl", "cpu core")
+        gpu = pick("gpu", "gpu core", "gpu temperature", "gpu hot")
+        if cpu is None and gpu is None and not fans:
+            return {}
+        return {"cpu": cpu, "gpu": gpu, "fans": [r["Value"] for r in fans],
+                "fan_names": [r["Name"] for r in fans], "provider": "rest"}
 
     def running(self):
         names = {n.lower() for n in ("LibreHardwareMonitor.exe", "OpenHardwareMonitor.exe")}
         return any((p.info["name"] or "").lower() in names for p in psutil.process_iter(["name"]))
+
+    def start_installed_provider(self):
+        """Ask the elevated startup task installed by Blob to start LHM without another UAC prompt."""
+        now = time.time()
+        if now - self.launch_checked < 30:
+            return
+        self.launch_checked = now
+        try:
+            subprocess.run(["schtasks", "/Run", "/TN", "Blob Sensors"], capture_output=True,
+                           timeout=5, creationflags=0x08000000)
+        except Exception:
+            pass
 
     def poll(self):
         """Returns {'cpu': °C, 'gpu': °C, 'fans': [rpm, ...]} — empty if no such app is running."""
@@ -500,7 +456,12 @@ class HardwareMonitorWMI:
             return self.values
         self.checked = now
         if self.namespace is None and not self.running():
+            self.start_installed_provider()
             self.values = {}
+            return self.values
+        rest = self.poll_rest()
+        if rest:
+            self.values = rest
             return self.values
         for ns, _ in ([(self.namespace, None)] if self.namespace else self.NAMESPACES):
             try:
@@ -522,7 +483,10 @@ class HardwareMonitorWMI:
                 self.namespace = ns
                 self.values = {"cpu": pick("cpu package", "core (tctl", "cpu core", "package"),
                                "gpu": pick("gpu core", "gpu temperature", "gpu hot"),
-                               "fans": [round(f) for f in fans]}
+                               "fans": [round(f) for f in fans],
+                               "fan_names": [r["Name"] for r in rows
+                                             if r.get("SensorType") == "Fan" and r.get("Value")],
+                               "provider": "wmi"}
                 return self.values
             except Exception:
                 continue
@@ -533,7 +497,6 @@ class HardwareMonitorWMI:
 
 class Monitor:
     def __init__(self):
-        self.asus = Asus()
         self.nv_power = NvidiaPower()
         self.nvml = Nvml()
         self.adapters = gpu_adapters()
@@ -545,12 +508,9 @@ class Monitor:
         self.base_mhz = (psutil.cpu_freq().max if psutil.cpu_freq() else 0) or 2000
         self.hwm = HardwareMonitorWMI()
         self.hwinfo = HWiNFOShared()
-        self.controller = Controller(self.asus)
-        # what this machine can actually do
-        self.caps = {"fan_control": bool(self.asus.h) and os.environ.get("BLOB_NO_ASUS") != "1",
-                     "asus": bool(self.asus.h) and os.environ.get("BLOB_NO_ASUS") != "1",
-                     "nvidia": bool(self.nvml.lib) and os.environ.get("BLOB_NO_NVML") != "1"}
-        self.cpu_source = "asus" if self.caps["asus"] else "none"
+        self.caps = {"nvidia": bool(self.nvml.lib) and os.environ.get("BLOB_NO_NVML") != "1",
+                     "fans_readable": False}
+        self.cpu_source = "none"
         self.lock = threading.Lock()
         self.state = {}
         self.nv_last, self.nv_data, self.nv_time = 0.0, {}, 0.0
@@ -558,9 +518,9 @@ class Monitor:
         psutil.cpu_percent()
         cpu = reg_str(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString")
         model = reg_str(r"HARDWARE\DESCRIPTION\System\BIOS", "SystemProductName")
-        nv = next((n for t, n in self.adapters if "NVIDIA" in n.upper()), "NVIDIA GPU")
+        nv = next((n for t, n in self.adapters if "NVIDIA" in n.upper()), "")
         igpu = next((n for t, n in self.adapters if "NVIDIA" not in n.upper()), "")
-        self.device = {"model": model.split("_")[0].replace("ASUS ", ""), "cpu": cpu.split(" w/")[0],
+        self.device = {"model": model.replace("_", " ").strip(), "cpu": cpu.split(" w/")[0],
                        "gpu": nv, "igpu": igpu.replace("(TM)", "")}
 
     def gpu_loads(self):
@@ -574,24 +534,34 @@ class Monitor:
             per.setdefault(luid, {}).setdefault(eng, 0.0)
             per[luid][eng] += v
         loads = {luid: min(100.0, max(e.values())) for luid, e in per.items()}
-        nv = next((t for t, n in self.adapters if "NVIDIA" in n.upper()), None)
-        ig = next((t for t, n in self.adapters if "NVIDIA" not in n.upper()), None)
-        return loads.get(nv, 0.0) if nv else None, loads.get(ig, 0.0) if ig else None
+        # Prefer a discrete NVIDIA adapter when present; otherwise the first real
+        # WDDM adapter is the primary GPU.  This keeps AMD- and Intel-only systems
+        # out of the old "iGPU detail only" dead end.
+        primary = next((t for t, n in self.adapters if "NVIDIA" in n.upper()), None)
+        if primary is None:
+            candidates = [t for t, n in self.adapters
+                          if "MICROSOFT" not in n.upper() and "BASIC" not in n.upper()]
+            primary = max(candidates, key=lambda tag: loads.get(tag, 0.0)) if candidates else None
+        other = next((t for t, _ in self.adapters if t != primary), None)
+        return (loads.get(primary, 0.0) if primary else None,
+                loads.get(other, 0.0) if other else None)
 
     def sample(self):
         now = time.time()
         self.pdh.collect()
-        a = self.asus
-        asus_ok = self.caps["asus"]
-        cpu_temp = a.get(a.CPU_TEMP) if asus_ok else None
-        fans = ([{"name": "CPU fan", "rpm": a.fan_rpm(a.CPU_FAN)},
-                 {"name": "GPU fan", "rpm": a.fan_rpm(a.GPU_FAN)}] if asus_ok else [])
+        cpu_temp = None
+        fans = []
+        self.cpu_source = "none"
+        self.caps["fans_readable"] = False
         extra = self.hwm.poll() or self.hwinfo.poll()
+        if extra:
+            self.cpu_source = "hwmonitor" if self.hwm.values else "hwinfo"
         if cpu_temp is None and extra.get("cpu"):
             cpu_temp = round(extra["cpu"])
-            self.cpu_source = "hwmonitor" if self.hwm.values else "hwinfo"
         if not fans and extra.get("fans"):
-            fans = [{"name": f"Fan {i + 1}", "rpm": rpm} for i, rpm in enumerate(extra["fans"][:3])]
+            names = extra.get("fan_names", [])
+            fans = [{"name": names[i] if i < len(names) else f"Fan {i + 1}", "rpm": round(rpm)}
+                    for i, rpm in enumerate(extra["fans"][:8])]
             self.caps["fans_readable"] = True
         perf = self.pdh.values("perf").get("_Total")
         dgpu_load, igpu_load = self.gpu_loads()
@@ -663,9 +633,8 @@ class Monitor:
                       "battery": round(batt.percent) if batt else None,
                       "secsleft": batt.secsleft if batt and batt.secsleft > 0 else None},
         }
-        self.controller.tick(s)
-        c = self.controller
-        s["control"] = {"mode": c.mode, "active": c.active, "reason": c.reason}
+        # Retain a neutral compatibility shape for older layout/test consumers.
+        s["control"] = {"mode": None, "active": None, "reason": ""}
         with self.lock:
             self.state = s
 

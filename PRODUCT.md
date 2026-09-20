@@ -1,9 +1,21 @@
 # Blob
 
 Blob is a native Windows liquid-glass tray control panel built with Python, OpenGL
-and a layered Win32 window. It combines hardware monitoring/fan controls, sound
-enhancement and music controls. Hardware support varies by sensor/provider; Apple
-Music queue operations use the installed Windows app through UI Automation.
+and a layered Win32 window. It combines vendor-neutral read-only hardware monitoring, sound
+enhancement and music controls. Hardware support varies by sensor/provider. Music controls work
+with any Windows media session; Apple Music queue operations are an optional extension when its
+Windows app is already installed.
+
+## Hardware card and mode bubble
+
+- The first view is labeled Hardware. Its card prioritizes CPU/GPU temperature and fan RPM, offers
+  Auto, Quiet, Balanced, Turbo and Custom preferences, and expands in place for the full
+  bounded sensor inventory.
+- A single-circle contextual corner control springs the card into a fused two-circle glass bubble.
+  Width, height, silhouette and content animate as one continuous morph. The main body
+  cycles the four quick modes and the attached satellite restores the full interface. Mode choices
+  persist, but are explicitly described as monitoring-only until a real fan-profile backend is
+  connected; Blob never pretends that a firmware or pump setting changed.
 
 ## Gaming and queue extension
 
