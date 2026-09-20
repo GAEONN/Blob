@@ -16,6 +16,8 @@ Windows app is already installed.
   cycles the four quick modes and the attached satellite restores the full interface. Mode choices
   persist, but are explicitly described as monitoring-only until a real fan-profile backend is
   connected; Blob never pretends that a firmware or pump setting changed.
+- The top-right anchor stays fixed during the morph. Bubble placement is locked by default and
+  becomes draggable through the same user-editable overlay shortcut used by Gaming.
 
 ## Gaming and queue extension
 

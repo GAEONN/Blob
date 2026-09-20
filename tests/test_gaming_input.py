@@ -16,6 +16,7 @@ class GamingInputTests(unittest.TestCase):
         a.panel = NS(page="gaming", tabs_open=True)
         a.visible, a.gaming_unlocked, a.gaming_modifier_drag = True, False, False
         a.drag, a.slider_drag, a.pressed = (10, 10), None, "tabs"
+        a.drag_click, a.drag_origin, a.drag_moved = None, None, False
         a.hover, a.mouse_xy, a.mouse_in = "tabs", (12, 12), True
         a.attached, a.detaching = "tabs", None
         a.cur_move = 303
@@ -117,6 +118,61 @@ class GamingInputTests(unittest.TestCase):
         self.app.panel.page, self.app.visible = "gaming", False
         self.app.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
         self.assertFalse(self.app.gaming_unlocked)
+
+    def test_same_hotkey_unlocks_hardware_bubble_for_dragging(self):
+        a = self.app
+        a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False)
+        a.bubble_unlocked = False
+        a.frame_dirty = False
+        a.wndproc(101, blob.WM_HOTKEY, blob.GAMING_HOTKEY, 0)
+        self.assertTrue(a.bubble_unlocked)
+        self.assertTrue(a.bubble_drag_active)
+        self.assertTrue(a.frame_dirty)
+        a.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
+        self.assertFalse(a.bubble_unlocked)
+
+    def test_unlocked_bubble_distinguishes_click_from_drag(self):
+        a = self.app
+        a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
+                     hit=Mock(return_value="hcycle"))
+        a.bubble_unlocked, a.drag = True, None
+        a.panel_local = Mock(return_value=(20, 20))
+        a.click, a._schedule, a.frame = Mock(), Mock(), Mock()
+        a.pos, a.pinned, a.captureable = [100, 80], False, False
+        a.vel, a.last_frame = blob.np.zeros(2), 0
+
+        with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (132, 101)]):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+            a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
+            a.wndproc(101, blob.WM_LBUTTONUP, 0, 0)
+        a.click.assert_called_once_with("hcycle", 0)
+        self.assertEqual(a.pos, [100, 80])
+
+        a.click.reset_mock()
+        with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (170, 130)]):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+            a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
+            a.wndproc(101, blob.WM_LBUTTONUP, 0, 0)
+        a.click.assert_not_called()
+        self.assertEqual(a.pos, [140, 110])
+        self.assertTrue(a.pinned)
+
+    def test_hotkey_editor_re_registers_and_persists_binding(self):
+        a = self.app
+        a.hotkey_mods, a.hotkey_vk = blob.DEFAULT_HOTKEY
+        a.gaming_hotkey_registered = True
+        a.panel.hotkey_label, a.panel.hotkey_error = "Ctrl + Alt + G", ""
+        self.u.RegisterHotKey.return_value = True
+        config = {}
+        with patch.object(blob.engine, "load_config", return_value=config), \
+             patch.object(blob.engine, "save_config") as save:
+            self.assertTrue(a.set_overlay_hotkey(blob.MOD_CONTROL | blob.MOD_SHIFT, ord("K")))
+        self.u.UnregisterHotKey.assert_called_once_with(101, blob.GAMING_HOTKEY)
+        self.u.RegisterHotKey.assert_called_once_with(
+            101, blob.GAMING_HOTKEY, blob.MOD_CONTROL | blob.MOD_SHIFT | blob.MOD_NOREPEAT, ord("K"))
+        self.assertEqual(a.panel.hotkey_label, "Ctrl + Shift + K")
+        self.assertEqual(config["overlay_hotkey"], {"mods": 6, "vk": ord("K")})
+        save.assert_called_once_with(config)
 
     def test_music_callback_never_focuses_gaming_even_unlocked(self):
         for unlocked in (False, True):

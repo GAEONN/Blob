@@ -168,6 +168,9 @@ every COM/device call on a worker thread.
   layout. Its card affordance is one unmarked glass circle. The card's width, height, crossfaded
   content and signed-distance silhouette must spring continuously into the bubble, which is the
   smooth union of a large cycle target and a smaller restore satellite.
+  Preserve the card's top-right anchor during that morph. Bubble placement starts locked and becomes
+  draggable through the same configurable overlay shortcut as Gaming. Settings must include a
+  click-to-record modified-key editor for that binding.
   Its body cycles Auto → Quiet → Balanced → Turbo; Custom stays on the full card. The card
   exposes a five-mode selector and a single chevron for the bounded, scrollable sensor inventory.
 * **The view switcher rests as a small pill** with the current view's name and springs open into the

@@ -214,6 +214,11 @@ Bubble clicks cycle Auto → Quiet → Balanced → Turbo. Custom is intentional
 it requires the full card. A selected preference must be labeled monitoring-only whenever no real
 fan-profile backend reports an active mode.
 
+The top and right edges remain anchored throughout the morph so the card's unmarked corner lens
+appears to become the final bubble. Bubble placement is locked by default. The same configurable
+overlay shortcut controls Gaming and bubble edit mode; Settings records any modified key chord and
+persists it through `RegisterHotKey`.
+
 ### Gaming strip and Playing Next extension
 
 This addition describes the native extension in `blob.pyw`, `gaming.py` and

@@ -41,8 +41,10 @@ power and clock data where available. Monitoring is read-only: Blob does not cha
 curves or power profiles. The Hardware card offers Auto, Quiet, Balanced, Turbo and Custom
 preferences while clearly marking them as monitoring-only until a fan-profile backend is connected.
 Its single-circle corner control smoothly contracts and reshapes the card into a fused glass mode
-bubble: clicking the body cycles the
-four quick modes, while the attached satellite restores the full card. Expanding the card's chevron
+bubble: clicking the body cycles the four quick modes, while the attached satellite restores the
+full card. The card's top-right remains fixed during the morph so the circle feels like the bubble's
+physical origin. Bubble placement opens locked; use the same editable overlay shortcut as Gaming
+to unlock and drag it. Expanding the card's chevron
 shows every discovered fan RPM plus CPU/GPU load, clocks and power, storage, memory and battery.
 The tray icon shows the CPU temperature when one is available.
 
@@ -151,9 +153,10 @@ the rest of the app usable while sensors are discovered and names the optional p
 Choose **Gaming** in Blob's view switcher for a draggable, always-on-top glass strip:
 FPS, frame time, CPU/GPU temperatures and utilization, RAM, fan RPM, and GPU power.
 Gaming opens **locked and click-through**: mouse clicks go to the game, not Blob.
-Hold **Ctrl+Alt** and drag anywhere on the strip to reposition it without unlocking.
-Press **Ctrl+Alt+G** to unlock/relock, or right-click Blob's tray icon and choose
-**Unlock gaming strip / Lock gaming strip** (also available if another app owns the shortcut).
+With the default shortcut, hold **Ctrl+Alt** and drag anywhere on the strip to reposition it without
+unlocking. Press **Ctrl+Alt+G** to unlock/relock Gaming or the Hardware bubble, or use the tray's
+**Unlock overlay / Lock overlay** command. Change this binding under Settings → Gaming by clicking
+the shortcut and pressing a new modified key combination.
 Unlocking expands navigation; drag a gap to reposition, then lock before playing.
 Reopening Gaming locks it again. The overlay never requests foreground focus in Gaming.
 This uses Windows' [layered-window input transparency](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows),

@@ -684,11 +684,11 @@ class GlassRenderer:
         self.prog["bands"].value = tuple(float(b) for b in bands)
         self.prog["viz_alpha"].value = float(alpha)
 
-    def capture(self, win_x, win_y, panel_w, panel_h, force=False):
+    def capture(self, win_x, win_y, panel_w, panel_h, force=False, panel_y=None):
         """Refresh the background copy. Returns True if a new frame should be drawn."""
         sp, M = self.sp, self.M
         h = int(round(panel_h))
-        py = self.panel_y(h)
+        py = self.panel_y(h) if panel_y is None else int(round(panel_y))
         ch, cw = h + 2 * M, self.cap.shape[1]
         self.stats = getattr(self, "stats", {})
         tb = time.perf_counter()
@@ -699,10 +699,11 @@ class GlassRenderer:
         self.stats["capture"] = time.perf_counter() - tb
         return force or moved or changed
 
-    def render(self, hwnd, win_x, win_y, panel_w, panel_h, fade, light, glassiness):
+    def render(self, hwnd, win_x, win_y, panel_w, panel_h, fade, light, glassiness, panel_y=None):
         S, sp, M = self.S, self.sp, self.M
         h, pw = int(round(panel_h)), int(round(panel_w))
-        py, px = self.panel_y(h), self.panel_x(pw)
+        py = self.panel_y(h) if panel_y is None else int(round(panel_y))
+        px = self.panel_x(pw)
         cap = self.cap
         ch, cw = h + 2 * M, cap.shape[1]
         t0 = time.perf_counter()

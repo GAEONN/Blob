@@ -391,6 +391,8 @@ class LifecycleTests(unittest.TestCase):
         app.panel = blob.Panel(1)
         app.snap = fixtures()
         app.springs = blob.Springs()
+        app.glass = NS(panel_y=lambda height: 777 - height)
+        app.ss = blob.Panel.SS
         old_width, old_height = app.panel.w, app.panel.height(app.snap)
         app.springs.get("width", old_width, k=185, zeta=.86)
         app.springs.get("height", old_height, k=260, zeta=.82)
@@ -404,6 +406,19 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(app.springs["height"].target, blob.Panel.BUBBLE_H * app.panel.S)
         self.assertEqual(app.springs["hardware_morph"].x, 0)
         self.assertEqual(app.springs["hardware_morph"].target, 1)
+        self.assertEqual(app.hardware_top, 777 - round(old_height / app.ss))
+        self.assertEqual(app._panel_y(49), app.hardware_top)
+        app.panel.hardware_view = "card"
+        app.springs["hardware_morph"].x = 0
+        self.assertEqual(app._panel_y(49), 777 - 49)
+
+    def test_hotkey_parser_requires_a_modifier_and_formats_binding(self):
+        self.assertEqual(blob.parse_hotkey({"mods": blob.MOD_CONTROL | blob.MOD_SHIFT,
+                                            "vk": ord("K")}),
+                         (blob.MOD_CONTROL | blob.MOD_SHIFT, ord("K")))
+        self.assertEqual(blob.hotkey_label(blob.MOD_CONTROL | blob.MOD_SHIFT, ord("K")),
+                         "Ctrl + Shift + K")
+        self.assertEqual(blob.parse_hotkey({"mods": 0, "vk": ord("Q")}), blob.DEFAULT_HOTKEY)
 
     def test_hardware_bubble_cycles_only_quick_modes(self):
         app = blob.App.__new__(blob.App)

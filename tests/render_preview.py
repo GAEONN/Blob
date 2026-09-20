@@ -41,6 +41,7 @@ def morph_preview(output):
 
     steps = (0.0, .2, .4, .6, .8, 1.0)
     cell_h = 350
+    anchored_top = renderer.panel_y(round(card.height(snap) / card.SS))
     sheet = Image.new("RGB", (len(steps) * renderer.W, cell_h), (30, 30, 30))
     draw = ImageDraw.Draw(sheet)
     for i, t in enumerate(steps):
@@ -49,14 +50,15 @@ def morph_preview(output):
         height = (card.height(snap) + (bubble.height(snap) - card.height(snap)) * ease) / card.SS
         renderer.set_panel_shape(t)
         with patch.object(glass.user32, "UpdateLayeredWindow", return_value=True):
-            renderer.render(None, 0, 0, width, height, t, (-.55, -.83), .35)
-        py, sp = renderer.panel_y(round(height)), renderer.sp
+            renderer.render(None, 0, 0, width, height, t, (-.55, -.83), .35,
+                            panel_y=anchored_top)
+        py, sp = anchored_top, renderer.sp
         pixels = renderer.dib.arr[py - sp:py + round(height) + sp].astype(np.float32)
         rgb = pixels[..., :3] + 30 * (1 - pixels[..., 3:4] / 255)
         image = Image.fromarray(np.clip(rgb[..., ::-1], 0, 255).astype(np.uint8))
         x = i * renderer.W
         draw.text((x + 12, 8), f"Morph {t:.1f}", fill="white")
-        sheet.paste(image, (x, cell_h - image.height))
+        sheet.paste(image, (x, 28))
     sheet.save(output)
     print(Path(output).resolve())
 

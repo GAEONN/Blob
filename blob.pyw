@@ -81,6 +81,8 @@ WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_CAPTURECHANGED = 0x200, 0x201, 0x
 WM_APP_TOGGLE, WM_APP_EXIT, WM_APP_REFOCUS = 0x8001, 0x8002, 0x8003
 WM_APP_GAMING_LOCK, WM_HOTKEY, GAMING_HOTKEY = 0x8004, 0x312, 1
 WS_EX_TRANSPARENT, WS_EX_NOACTIVATE = 0x20, 0x08000000
+MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
+DEFAULT_HOTKEY = (MOD_CONTROL | MOD_ALT, ord("G"))
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -177,6 +179,34 @@ def reg_dword(path, name, default):
 
 
 LIGHT_TASKBAR = reg_dword(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) == 1
+
+
+def parse_hotkey(value):
+    """Return a safe RegisterHotKey (modifier mask, virtual key) pair."""
+    try:
+        mods, vk = int(value.get("mods", DEFAULT_HOTKEY[0])), int(value.get("vk", DEFAULT_HOTKEY[1]))
+    except (AttributeError, TypeError, ValueError):
+        return DEFAULT_HOTKEY
+    return (mods & 0xF, vk) if mods & 0xF and 8 <= vk <= 0xFE else DEFAULT_HOTKEY
+
+
+def hotkey_label(mods, vk):
+    parts = []
+    for flag, name in ((MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift"), (MOD_WIN, "Win")):
+        if mods & flag:
+            parts.append(name)
+    if ord("A") <= vk <= ord("Z") or ord("0") <= vk <= ord("9"):
+        key = chr(vk)
+    elif 0x70 <= vk <= 0x87:
+        key = f"F{vk - 0x6F}"
+    else:
+        key = {0x20: "Space", 0x09: "Tab", 0x08: "Backspace", 0x2D: "Insert",
+               0x2E: "Delete", 0x24: "Home", 0x23: "End", 0x21: "Page Up",
+               0x22: "Page Down", 0x25: "Left", 0x26: "Up", 0x27: "Right",
+               0x28: "Down", 0xBA: ";", 0xBB: "+", 0xBC: ",", 0xBD: "-",
+               0xBE: ".", 0xBF: "/", 0xC0: "`", 0xDB: "[", 0xDC: "\\",
+               0xDD: "]", 0xDE: "'"}.get(vk, f"Key {vk}")
+    return " + ".join(parts + [key])
 
 
 def startup_enabled():
@@ -369,6 +399,9 @@ class Panel:
         self.hardware_view = "card"
         self.hardware_mode = "auto"
         self.hardware_status = "Monitoring only · fan profiles are not connected"
+        self.hotkey_label = hotkey_label(*DEFAULT_HOTKEY)
+        self.hotkey_editing = False
+        self.hotkey_error = ""
         self.hover_key = None      # supplied by App so artwork can reveal contextual controls
         self.query = ""
         self.scroll = {}
@@ -1184,9 +1217,11 @@ class Panel:
         rows[rows.index(("head", "Hardware")):rows.index(("head", "Hardware"))] = [
             ("head", "Gaming"),
             ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
-            ("note", "gaming_tip", "Gaming is click-through. Hold Ctrl+Alt and drag it directly, or press Ctrl+Alt+G to unlock controls. Use borderless games.", None, None),
+            ("note", "gaming_tip", f"Gaming is click-through while locked. Hold the shortcut modifiers to drag temporarily, or use {self.hotkey_label} to unlock Gaming or the Hardware bubble.", None, None),
+            ("keybind", "overlay", "Overlay lock shortcut", self.hotkey_label,
+             self.hotkey_error or "Click the shortcut, then press a modified key combination"),
         ]
-        h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46}
+        h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46, "keybind": 58}
         layouts = []
         for row in rows:
             kind = row[0]
@@ -1199,6 +1234,10 @@ class Panel:
             elif kind == "note":
                 names = self.wrap(row[2], 11, "Regular", W - 2 * pad)
                 rh = max(30, 14 + len(names) * 16)
+            elif kind == "keybind":
+                names = self.wrap(row[2], 13 if c else 14, "Regular", W - 2 * pad - 136 * S)
+                hints = self.wrap(row[4], 10, "Regular", W - 2 * pad)
+                rh = max(58, 16 + len(names) * 18 + len(hints) * 14)
             layouts.append((row, rh * S, names, hints))
         total = sum(rh for _, rh, _, _ in layouts)
         view_h = self.height(None) - top - 78 * S
@@ -1233,6 +1272,21 @@ class Panel:
                     _, _, name, options, cur = row
                     L(pad, y + 14 * S, name, 13 if c else 14, "Semibold Text", 255, "lm")
                     self.segmented(key, options, cur, (pad, y + 26 * S, W - pad, y + 54 * S), 11)
+                elif kind == "keybind":
+                    _, _, name, binding, hint = row
+                    for i, line in enumerate(names):
+                        L(pad, y + (16 + i * 18) * S, line, 13 if c else 14, "Regular", 255, "lm")
+                    text = "Press keys…" if self.hotkey_editing else binding
+                    box = (W - pad - 132 * S, y + 3 * S, W - pad, y + 33 * S)
+                    self.static(box, 15 * S, strength=5 * S, bevel=8 * S, zoom=.97,
+                                rim=.8, frost=1.0, lift=.10, raised=.7)
+                    self.hover_lens("hotkey:overlay", box, 15 * S)
+                    L((box[0] + box[2]) / 2, (box[1] + box[3]) / 2,
+                      self.fit(text, 11, "Semibold Text", box[2] - box[0] - 14 * S),
+                      11, "Semibold Text", 255, "mm")
+                    for i, line in enumerate(hints):
+                        L(pad, y + (42 + i * 14) * S, line, 10, "Regular",
+                          210 if self.hotkey_error else 135, "lm")
                 else:
                     _, _, name, val, hint = row
                     for i, line in enumerate(names):
@@ -1290,19 +1344,30 @@ class App:
         self.panel.update_width()
         self.panel.backdrop = bool(cfg.get("backdrop", False))
         self.panel.options = dict(cfg.get("options", {}))
+        self.hotkey_mods, self.hotkey_vk = parse_hotkey(cfg.get("overlay_hotkey", {}))
+        self.panel.hotkey_label = hotkey_label(self.hotkey_mods, self.hotkey_vk)
         self.startup = startup_enabled()
         self.springs = Springs()
         self.springs.get("width", self.panel.w, k=185, zeta=0.86)
         self.springs.get("hardware_morph", 1.0 if self.panel.hardware_view == "bubble" else 0.0,
                          k=155, zeta=0.82)
+        # Bubble mode occupies the card's former top-right corner. The fixed
+        # layered window has room below it, so expansion can grow back down.
+        self.hardware_top = self.glass.panel_y(round((210 + Panel.TOP) * self.S))
         self.controls, self.old_controls = [], []
         self.visible = self.pinned = False
         self.gaming_unlocked = False
+        self.bubble_unlocked = False
         self.gaming_modifier_drag = False
+        self.hotkey_editing = False
+        self.hotkey_swallow = set()
         if PROFILE is not None:
             self.pinned = True  # profiling: keep the panel up even when focus moves elsewhere
         self.pos = None  # window top-left (screen px)
         self.drag = None
+        self.drag_click = None
+        self.drag_origin = None
+        self.drag_moved = False
         self.slider_drag = None
         self.pressed = None
         self.hover = None
@@ -1340,16 +1405,17 @@ class App:
         self.cur_move = user32.LoadCursorW(None, 32646)
         self.apply_gaming_input()
         self.gaming_hotkey_registered = bool(user32.RegisterHotKey(
-            self.hwnd, GAMING_HOTKEY, 0x4003, ord("G")))  # Ctrl+Alt, MOD_NOREPEAT
+            self.hwnd, GAMING_HOTKEY, self.hotkey_mods | MOD_NOREPEAT, self.hotkey_vk))
         if not self.gaming_hotkey_registered:
-            engine.log("Ctrl+Alt+G is unavailable; use the tray menu to unlock the gaming strip.")
+            self.panel.hotkey_error = "Shortcut is already in use"
+            engine.log(f"{self.panel.hotkey_label} is unavailable; use the tray menu to unlock the overlay.")
 
         self.icon = pystray.Icon(APP_NAME, tray_image(None), APP_NAME, menu=pystray.Menu(
             pystray.MenuItem("Open", lambda: user32.PostMessageW(self.hwnd, WM_APP_TOGGLE, 0, 0),
                              default=True, visible=False),
-            pystray.MenuItem(lambda item: "Lock gaming strip" if self.gaming_unlocked else "Unlock gaming strip",
+            pystray.MenuItem(lambda item: "Lock overlay" if self.overlay_unlocked else "Unlock overlay",
                              lambda: user32.PostMessageW(self.hwnd, WM_APP_GAMING_LOCK, 0, 0),
-                             enabled=lambda item: self.visible and self.panel.page == "gaming"),
+                             enabled=lambda item: self.visible and self.overlay_lock_available),
             pystray.MenuItem("Start with Windows", lambda i, it: set_startup(not startup_enabled()),
                              checked=lambda i: startup_enabled()),
             pystray.MenuItem("Exit", lambda: user32.PostMessageW(self.hwnd, WM_APP_EXIT, 0, 0)),
@@ -1451,10 +1517,14 @@ class App:
         for spring in (width, height, morph):
             spring.k = 180.0
             spring.c = 2 * 0.82 * spring.k ** 0.5
+        if self.panel.hardware_view == "card" and view == "bubble":
+            self.hardware_top = self.glass.panel_y(round(height.x / self.ss))
         cfg = engine.load_config()
         cfg["hardware_view"] = view
         engine.save_config(cfg)
         self.panel.hardware_view = view
+        if view != "bubble":
+            self.bubble_unlocked = False
         self.panel.tabs_open = False
         self.panel.tabs_t = 0.0
         self.old_page_springs()
@@ -1500,8 +1570,9 @@ class App:
         if was:
             user32.ShowWindow(self.hwnd, 0)
         self.glass.source.frozen = False
+        height = self.springs["height"].x / self.ss
         self.glass.capture(self.pos[0], self.pos[1], self.springs["width"].x / self.ss,
-                           self.springs["height"].x / self.ss, force=True)
+                           height, force=True, panel_y=self._panel_y(height))
         self.glass.source.frozen = True
         if was:
             user32.ShowWindow(self.hwnd, 4)   # SW_SHOWNOACTIVATE
@@ -1516,10 +1587,34 @@ class App:
     def gaming_drag_active(self):
         return self.gaming_locked and self.gaming_modifier_drag
 
-    def update_gaming_modifier_drag(self):
-        """Temporarily accept only drag input while Ctrl+Alt are physically held."""
+    @property
+    def bubble_mode(self):
+        return self.panel.page == "blob" and self.panel.hardware_view == "bubble"
+
+    @property
+    def bubble_drag_active(self):
+        return self.visible and self.bubble_mode and self.bubble_unlocked
+
+    @property
+    def overlay_lock_available(self):
+        return self.panel.page == "gaming" or self.bubble_mode
+
+    @property
+    def overlay_unlocked(self):
+        return self.gaming_unlocked if self.panel.page == "gaming" else (
+            self.bubble_unlocked if self.bubble_mode else False)
+
+    def hotkey_modifiers_held(self):
+        mods = getattr(self, "hotkey_mods", DEFAULT_HOTKEY[0])
         held = lambda vk: bool(user32.GetAsyncKeyState(vk) & 0x8000)
-        active = self.visible and self.gaming_locked and held(0x11) and held(0x12)
+        checks = ((MOD_CONTROL, (0x11,)), (MOD_ALT, (0x12,)), (MOD_SHIFT, (0x10,)),
+                  (MOD_WIN, (0x5B, 0x5C)))
+        return bool(mods) and all(not (mods & flag) or any(held(vk) for vk in keys)
+                                  for flag, keys in checks)
+
+    def update_gaming_modifier_drag(self):
+        """Temporarily accept drag input while the configured shortcut modifiers are held."""
+        active = self.visible and self.gaming_locked and self.hotkey_modifiers_held()
         if active != self.gaming_modifier_drag:
             self.gaming_modifier_drag = active
             self.apply_gaming_input()
@@ -1537,6 +1632,8 @@ class App:
             user32.SetWindowLongPtrW(self.hwnd, -20, desired)
         if self.gaming_locked and not self.gaming_modifier_drag:
             self.drag = self.slider_drag = self.pressed = None
+            self.drag_click = self.drag_origin = None
+            self.drag_moved = False
             self.hover = self.mouse_xy = self.attached = self.detaching = None
             self.mouse_in = False
             self.panel.tabs_open = False
@@ -1554,6 +1651,41 @@ class App:
         self.panel.tabs_open = self.gaming_unlocked
         self.frame_dirty = True
         self.icon.update_menu()
+
+    def toggle_overlay_input(self):
+        if not self.visible:
+            return
+        if self.panel.page == "gaming":
+            self.toggle_gaming_input()
+        elif self.bubble_mode:
+            self.bubble_unlocked = not self.bubble_unlocked
+            self.frame_dirty = True
+            self.icon.update_menu()
+
+    def begin_hotkey_edit(self):
+        self.hotkey_editing = not self.hotkey_editing
+        self.panel.hotkey_editing = self.hotkey_editing
+        self.panel.hotkey_error = ""
+
+    def set_overlay_hotkey(self, mods, vk):
+        old = (self.hotkey_mods, self.hotkey_vk)
+        if self.gaming_hotkey_registered:
+            user32.UnregisterHotKey(self.hwnd, GAMING_HOTKEY)
+        registered = bool(user32.RegisterHotKey(self.hwnd, GAMING_HOTKEY,
+                                                mods | MOD_NOREPEAT, vk))
+        if not registered:
+            self.gaming_hotkey_registered = bool(user32.RegisterHotKey(
+                self.hwnd, GAMING_HOTKEY, old[0] | MOD_NOREPEAT, old[1]))
+            self.panel.hotkey_error = "That shortcut is already in use"
+            return False
+        self.gaming_hotkey_registered = True
+        self.hotkey_mods, self.hotkey_vk = mods, vk
+        self.panel.hotkey_label = hotkey_label(mods, vk)
+        self.panel.hotkey_error = ""
+        cfg = engine.load_config()
+        cfg["overlay_hotkey"] = {"mods": mods, "vk": vk}
+        engine.save_config(cfg)
+        return True
 
     def maintain_gaming_topmost(self):
         if not self.visible or self.panel.page != "gaming":
@@ -1582,6 +1714,7 @@ class App:
         self.snap = self.mon.snapshot() or self.snap or empty_snapshot()
         self.visible = True
         self.gaming_unlocked = False
+        self.bubble_unlocked = False
         self.gaming_modifier_drag = False
         self.apply_gaming_input()
         self.draw_content()
@@ -1606,7 +1739,9 @@ class App:
 
     def hide(self):
         self.gaming_unlocked = False
+        self.bubble_unlocked = False
         self.gaming_modifier_drag = False
+        self.hotkey_editing = self.panel.hotkey_editing = False
         self.apply_gaming_input()
         self.gaming.set_active(False)
         self.mouse_in = False
@@ -1803,8 +1938,10 @@ class App:
         animating = self.springs.moving or self.drag is not None or bool(self.slider_drag)             or abs(self.vel).max() > 0.5
         force = animating or viz_live or self.frame_dirty
         # cheap path: poll the screen; draw only if the background or anything on the panel changed
+        panel_h = self.springs["height"].x / self.ss
+        panel_y = self._panel_y(panel_h)
         if not self.glass.capture(self.pos[0], self.pos[1], width.x / self.ss,
-                                  self.springs["height"].x / self.ss, force):
+                                  panel_h, force, panel_y=panel_y):
             return
         self.frame_dirty = False
         tr = time.perf_counter()
@@ -1835,7 +1972,7 @@ class App:
         self.light = np.round(self.light, 3)
         self.glass.set_panel_shape(morph.x)
         self.glass.render(self.hwnd, self.pos[0], self.pos[1], width.x / self.ss,
-                          self.springs["height"].x / self.ss, fade, tuple(self.light), self.glassiness)
+                          panel_h, fade, tuple(self.light), self.glassiness, panel_y=panel_y)
         if fade >= 0.999 and self.old_controls:
             self.old_controls = []
             for k in [k for k in self.springs if k.startswith("old:")]:
@@ -1846,7 +1983,7 @@ class App:
 
     def _update_pointer(self, lenses):
         S, sp = self.panel.S, self.springs
-        style = self.pointer_style
+        style = "system" if self.bubble_drag_active else self.pointer_style
         hv = {c[1]: c[2] for c in self.controls if c[0] == "hover"}
         xy = self.mouse_xy if self.mouse_in else None
         if style == "system" or xy is None:
@@ -1901,12 +2038,19 @@ class App:
             ox.target = oy.target = 0.0
         return ox.x, oy.x
 
+    def _panel_y(self, height):
+        """Top-align the hardware morph; all other pages keep the bottom tab-bar anchor."""
+        morph = self.springs.get("hardware_morph", 0.0)
+        if self.panel.page == "blob" and (self.panel.hardware_view == "bubble" or morph.x > .001):
+            return self.hardware_top
+        return self.glass.panel_y(int(round(height)))
+
     def panel_local(self, lp):
         """Mouse position in layout units (the panel is drawn supersampled)."""
         h = self.springs["height"].x / self.ss
         w = self.springs.get("width", self.panel.w).x / self.ss
         x = ctypes.c_short(lp & 0xFFFF).value - self.glass.panel_x(w)
-        y = ctypes.c_short((lp >> 16) & 0xFFFF).value - self.glass.panel_y(int(round(h)))
+        y = ctypes.c_short((lp >> 16) & 0xFFFF).value - self._panel_y(h)
         return x * self.ss, y * self.ss
 
     def set_slider(self, key, v):
@@ -1933,6 +2077,7 @@ class App:
                 self.old_page_springs()
                 self.panel.page = key
                 self.gaming_unlocked = False
+                self.bubble_unlocked = False
                 self.apply_gaming_input()
                 self.panel.update_width()
                 if key == "gaming":
@@ -1993,6 +2138,8 @@ class App:
             cfg = engine.load_config()
             cfg["pointer"] = key
             engine.save_config(cfg)
+        elif kind == "hotkey" and key == "overlay":
+            self.begin_hotkey_edit()
         elif kind == "toggle":
             if key == "sound":
                 self.sound.set_enabled(not self.sound.enabled)
@@ -2037,10 +2184,10 @@ class App:
     def wndproc(self, hwnd, msg, wp, lp):
         try:
             if msg == WM_APP_GAMING_LOCK or (msg == WM_HOTKEY and wp == GAMING_HOTKEY):
-                self.toggle_gaming_input()
+                self.toggle_overlay_input()
                 return 0
             if self.gaming_drag_active:
-                if msg == 0x84:  # WM_NCHITTEST: Ctrl+Alt temporarily makes the strip draggable
+                if msg == 0x84:  # WM_NCHITTEST: shortcut modifiers temporarily enable dragging
                     return 1  # HTCLIENT
                 if msg == WM_LBUTTONDOWN:
                     cx, cy = cursor_pos()
@@ -2147,6 +2294,10 @@ class App:
                     self._schedule(True)
                 elif self.drag:
                     x, y = cursor_pos()
+                    if self.drag_origin and not self.drag_moved:
+                        self.drag_moved = abs(x - self.drag_origin[0]) + abs(y - self.drag_origin[1]) >= 5
+                        if not self.drag_moved:
+                            return 0
                     nx, ny = x - self.drag[0], y - self.drag[1]
                     if abs(nx - self.pos[0]) + abs(ny - self.pos[1]) > 0:
                         self.vel += (nx - self.pos[0], ny - self.pos[1])
@@ -2188,7 +2339,14 @@ class App:
             if msg == WM_LBUTTONDOWN:
                 x, y = self.panel_local(lp)
                 h = self.panel.hit(x, y)
-                if h:
+                if h and self.bubble_drag_active:
+                    cx, cy = cursor_pos()
+                    self.drag = (cx - self.pos[0], cy - self.pos[1])
+                    self.drag_click = h
+                    self.drag_origin = (cx, cy)
+                    self.drag_moved = False
+                    user32.SetCapture(hwnd)
+                elif h:
                     self.pressed = h
                     self.click(h, x)
                 else:
@@ -2197,6 +2355,7 @@ class App:
                     user32.SetCapture(hwnd)
                 return 0
             if msg in (WM_LBUTTONUP, WM_CAPTURECHANGED):
+                deferred_click = self.drag_click if self.drag and not self.drag_moved and msg == WM_LBUTTONUP else None
                 self.pressed = None
                 if self.slider_drag:
                     key, self.slider_drag = self.slider_drag, None
@@ -2215,9 +2374,14 @@ class App:
                     self.draw_content()
                 if self.drag:
                     self.drag = None
-                    user32.ReleaseCapture()
+                    self.drag_click = self.drag_origin = None
+                    self.drag_moved = False
+                    if user32.GetCapture() == hwnd:
+                        user32.ReleaseCapture()
                     if self.captureable:
                         self.refresh_backdrop()
+                if deferred_click:
+                    self.click(deferred_click, 0)
                 self._schedule(True)
                 return 0
             if msg == WM_SETCURSOR:
@@ -2227,8 +2391,8 @@ class App:
                 x, y = self.panel_local(lpv)
                 w, h = self.springs.get("width", self.panel.w).x, self.springs["height"].x
                 inside = 0 <= x < w and 0 <= y < h
-                glass_ptr = inside and self.pointer_style != "system"
-                user32.SetCursor(None if glass_ptr else self.cur_arrow)  # the glass pointer takes over
+                glass_ptr = inside and self.pointer_style != "system" and not self.bubble_drag_active
+                user32.SetCursor(None if glass_ptr else self.cur_move if self.bubble_drag_active else self.cur_arrow)
                 return 1
             if msg == WM_DESTROY:
                 user32.PostQuitMessage(0)
@@ -2273,6 +2437,30 @@ class App:
                 k = ctypes.cast(lp, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 down = wp in (0x100, 0x104)
                 if not k.flags & 0x10:  # ignore our own injected keys
+                    if k.vkCode in self.hotkey_swallow:
+                        if not down:
+                            self.hotkey_swallow.discard(k.vkCode)
+                        return 1
+                    if self.hotkey_editing:
+                        if down:
+                            self.hotkey_swallow.add(k.vkCode)
+                            modifier_vks = {0x10, 0x11, 0x12, 0x5B, 0x5C}
+                            if k.vkCode == 0x1B:
+                                self.hotkey_editing = self.panel.hotkey_editing = False
+                                self.panel.hotkey_error = "Shortcut edit cancelled"
+                            elif k.vkCode not in modifier_vks:
+                                held = lambda vk: bool(user32.GetAsyncKeyState(vk) & 0x8000)
+                                mods = ((MOD_CONTROL if held(0x11) else 0) |
+                                        (MOD_ALT if held(0x12) else 0) |
+                                        (MOD_SHIFT if held(0x10) else 0) |
+                                        (MOD_WIN if held(0x5B) or held(0x5C) else 0))
+                                if not mods:
+                                    self.panel.hotkey_error = "Include Ctrl, Alt, Shift, or Win"
+                                elif self.set_overlay_hotkey(mods, k.vkCode):
+                                    self.hotkey_editing = self.panel.hotkey_editing = False
+                            self.draw_content()
+                            self.frame_dirty = True
+                        return 1
                     held = lambda vk: user32.GetAsyncKeyState(vk) & 0x8000
                     win = held(0x5B) or held(0x5C)
                     if k.vkCode == 0x2C or (k.vkCode == 0x53 and win and held(0x10)):
