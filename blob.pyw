@@ -328,6 +328,7 @@ class Panel:
         self.compact = False
         self.backdrop = False      # album cover behind the music page
         self.tabs_open = False     # the switcher expands when you reach for it
+        self.tabs_t = 0.0          # animated 0..1 between resting pill and full set
         self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
@@ -438,21 +439,24 @@ class Panel:
         self.rects[key] = rect
         self.controls.append(("hover", key, rect, r))
 
-    def segmented(self, prefix, options, selected, box, font_size=13, running=None):
+    def segmented(self, prefix, options, selected, box, font_size=13, running=None, alpha=1.0, hit=True):
         """Frosted capsule track; the thumb is animated by App (slides, stretches, settles)."""
         S = self.S
         tx0, ty0, tx1, ty1 = box
         th = ty1 - ty0
         self.static(box, th / 2, strength=6 * S, bevel=9 * S, rim=0.6, frost=1.0, lift=0.05)
+        if alpha <= 0.02:
+            return
         opts = [(o[0], o[1], o[2] if len(o) > 2 else 1.0) for o in options]
         total = sum(o[2] for o in opts)
         x, segs, sel = tx0, [], 0
         for i, (key, name, wgt) in enumerate(opts):
             sw = (tx1 - tx0) * wgt / total
             segs.append((x, x + sw))
-            self.rects[f"{prefix}:{key}"] = (x, ty0, x + sw, ty1)
+            if hit:
+                self.rects[f"{prefix}:{key}"] = (x, ty0, x + sw, ty1)
             on = key == selected
-            if not on:
+            if not on and hit:
                 ins = 3 * S
                 self.controls.append(("hover", f"{prefix}:{key}", (x + ins, ty0 + ins, x + sw - ins, ty1 - ins),
                                       th / 2 - ins))
@@ -461,12 +465,12 @@ class Panel:
             cx = x + sw / 2
             icon = len(name) == 1 and ord(name) > 0xE000
             self.label(cx, ty0 + th / 2, name, 11 if icon else font_size, "Semibold Text" if on else "Regular",
-                       255 if on else 175, "mm", icon=icon)
+                       int((255 if on else 175) * alpha), "mm", icon=icon)
             if running == key:
                 r, cy = 2 * S, ty1 - 3 * S - 6 * S
                 self.di.ellipse((cx - r, cy - r, cx + r, cy + r), fill=255)
             x += sw
-        self.controls.append(("seg", prefix, box, segs, sel))
+        self.controls.append(("seg", prefix, box, segs, sel, alpha))
 
     def slider(self, key, value, x0, x1, cy):
         S = self.S
@@ -491,19 +495,24 @@ class Panel:
         self._begin(H)
         pad = self.pad_u * S
         # the switcher sits at the bottom of a bottom-anchored pane, so it never moves between pages
+        t = max(0.0, min(1.0, self.tabs_t))           # 0 = resting pill, 1 = full set
         y0, y1 = H - 50 * S, H - 16 * S
-        if self.tabs_open:
-            self.segmented("page", PAGES, self.page, (pad, y0, W - pad, y1), 11 if self.compact else 13)
-        else:
-            label = dict((k, n) for k, n in PAGES)[self.page]
-            half = (34 + 4.5 * len(label)) * S
-            box = (W / 2 - half, y0 + 4 * S, W / 2 + half, y1 - 4 * S)
+        label = dict((k, n) for k, n in PAGES)[self.page]
+        half_rest = (34 + 4.5 * len(label)) * S
+        lerp = lambda a, b: a + (b - a) * t
+        box = (lerp(W / 2 - half_rest, pad), lerp(y0 + 4 * S, y0),
+               lerp(W / 2 + half_rest, W - pad), lerp(y1 - 4 * S, y1))
+        self.segmented("page", PAGES, self.page, box, 11 if self.compact else 13, alpha=t,
+                       hit=t > 0.55)
+        if t < 0.995:                                  # the resting pill's own label
+            a = int(215 * (1 - t))
+            self.label(W / 2 - 7 * S, (box[1] + box[3]) / 2, label, 11 if self.compact else 12,
+                       "Semibold Text", a, "mm")
+            self.di.text((W / 2 + half_rest - 13 * S, (box[1] + box[3]) / 2), "\uE70E",
+                         font=self.f.icon(8), fill=int(150 * (1 - t)), anchor="mm")
+        if t < 0.55:
             self.rects["tabs"] = (pad, y0 - 6 * S, W - pad, y1 + 6 * S)
             self.controls.append(("hover", "tabs", box, (box[3] - box[1]) / 2))
-            self.label(W / 2 - 7 * S, (box[1] + box[3]) / 2, label, 11 if self.compact else 12,
-                       "Semibold Text", 210, "mm")
-            self.di.text((box[2] - 13 * S, (box[1] + box[3]) / 2), "\uE70E", font=self.f.icon(8), fill=150,
-                         anchor="mm")
         top = self.CONTENT * S
         if self.page == "music" and self.backdrop and media is not None and media.art is not None:
             self._backdrop(media.art, H)
@@ -1180,7 +1189,8 @@ class App:
                                     r=r, strength=5 * S * a, bevel=8 * S, zoom=1 - 0.04 * a,
                                     rim=0.5 * max(a, 0.2), frost=a, lift=0.08 * a, raised=0.6 * a))
             elif kind == "seg":
-                _, key, (tx0, ty0, tx1, ty1), segs, sel = c
+                _, key, (tx0, ty0, tx1, ty1), segs, sel = c[:5]
+                seg_alpha = c[5] if len(c) > 5 else 1.0
                 inset = 3 * S
                 a0, a1 = segs[sel]
                 cx = sp.get(prefix + "segx:" + key, (a0 + a1) / 2, k=330, zeta=0.62)
@@ -1196,7 +1206,7 @@ class App:
                 L = dict(rect=(cx.x - half_w, cy - half_h, cx.x + half_w, cy + half_h), r=half_h,
                          strength=(10 + 10 * m + 6 * press.x) * S, bevel=11 * S, zoom=0.9 - 0.1 * m - 0.05 * press.x,
                          rim=1.0, frost=1.0 - 0.75 * max(m, press.x), lift=0.16 * (1 - 0.5 * m), raised=1.0)
-                self._fade(L, presence)
+                self._fade(L, presence * seg_alpha)
                 out.append(L)
             elif kind == "slider":
                 _, key, x0, x1, cy, value = c
@@ -1289,6 +1299,11 @@ class App:
         self.last_frame = now
         self.springs.step(dt)
         fade = self.springs.get("fade", 1.0).x
+        tabs = self.springs.get("tabs", 0.0, k=300, zeta=0.85)
+        tabs.target = 1.0 if self.panel.tabs_open else 0.0
+        if abs(tabs.x - self.panel.tabs_t) > 0.004:     # redraw the labels as the pill opens
+            self.panel.tabs_t = tabs.x
+            self.draw_content()
         if self.panel.page == "music" and self.panel.music_view == "queue" and not self.am.queue                 and now - self.last_queue > 3:
             self.last_queue = now
             self.am.refresh_queue()
@@ -1606,7 +1621,6 @@ class App:
                     want = bool(self.hover and (self.hover == "tabs" or self.hover.startswith("page:")))
                     if want != self.panel.tabs_open:
                         self.panel.tabs_open = want
-                        self.draw_content()
                     if time.perf_counter() - self.last_frame >= 0.006:
                         self.frame_dirty = True
                         self.frame()
@@ -1614,9 +1628,7 @@ class App:
             if msg == 0x2A3 and not os.environ.get("BLOB_NOLEAVE"):  # WM_MOUSELEAVE (debug: ignore)
                 self.mouse_in = False
                 self.hover = None
-                if self.panel.tabs_open:
-                    self.panel.tabs_open = False
-                    self.draw_content()
+                self.panel.tabs_open = False
                 self.frame_dirty = True
                 return 0
             if msg == WM_LBUTTONDOWN:
