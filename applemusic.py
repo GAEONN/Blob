@@ -50,7 +50,8 @@ class AppleMusic:
     def __init__(self, refocus=None):
         self.results = []          # [{title, artist, album, url, art, kind}]
         self.playlists = []        # [name]
-        self.queue = []            # [{title, artist}] — Apple Music's Playing Next
+        self.queue = []            # [{title, artist, art}] — Apple Music's Playing Next
+        self._art_cache = {}       # (title, artist) -> PIL image
         self.status = ""           # short message for the UI ("Searching…")
         self.version = 0           # bumps whenever results / playlists / status change
         self.country = store_country()
@@ -333,12 +334,44 @@ class AppleMusic:
                                 grab(k, dd + 1)
                         grab(ch)
                         if texts:
-                            items.append({"title": texts[0],
+                            items.append({"title": texts[0], "art": None,
                                           "artist": " \u2014 ".join(texts[1:3]) if len(texts) > 1 else ""})
                     walk(ch, d + 1)
             walk(w)
             self.queue = items[:40]
             self._queue_panel(w, False)
+        self.version += 1
+        self._queue_art()
+
+    def _queue_art(self):
+        """Look each queued song up in Apple's catalog for its cover."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def art(q):
+            key = (q["title"], q["artist"])
+            if key in self._art_cache:
+                return self._art_cache[key]
+            try:
+                term = f"{q['title']} {q['artist'].split(' \u2014 ')[0]}"
+                url = "https://itunes.apple.com/search?" + urllib.parse.urlencode(
+                    {"term": term, "entity": "song", "limit": 1, "country": self.country})
+                with urllib.request.urlopen(url, timeout=5) as r:
+                    res = json.load(r).get("results") or []
+                img = None
+                if res and res[0].get("artworkUrl100"):
+                    with urllib.request.urlopen(res[0]["artworkUrl100"], timeout=5) as r:
+                        img = Image.open(io.BytesIO(r.read())).convert("RGB")
+            except Exception:
+                img = None
+            self._art_cache[key] = img
+            return img
+
+        todo = [q for q in self.queue if q.get("art") is None][:12]
+        if not todo:
+            return
+        with ThreadPoolExecutor(6) as ex:
+            for q, img in zip(todo, ex.map(art, todo)):
+                q["art"] = img
         self.version += 1
 
     def _play_queue(self, index):

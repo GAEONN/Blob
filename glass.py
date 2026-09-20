@@ -176,7 +176,8 @@ uniform sampler2D acc0, acc1;         // accent colours (premultiplied): previou
 uniform sampler2D pic0, pic1;         // images (album art), premultiplied, drawn as-is
 uniform vec4 ambient;                 // page tint at the top (e.g. the album's colour), alpha = strength
 uniform vec3 ambient2;                // page tint at the bottom
-uniform vec2 ink0_size, ink1_size;
+uniform vec2 ink0_size, ink1_size;   // in texels (content is rendered supersampled)
+uniform float ink_ss;                // texels per window pixel
 uniform float fade;                   // 0 = previous content, 1 = current
 uniform vec2 bg_size, cap_origin;     // window px + cap_origin = bg px
 uniform vec2 panel_pos, panel_size;   // panel rect in window px
@@ -266,13 +267,21 @@ float lensSd(int i, vec2 p) {
     return d;
 }
 
+vec2 contentUV(vec2 size, vec2 pp) {
+    // content layers are bottom-anchored: the tab bar sits still while a page morphs
+    vec2 q = vec2(pp.x, pp.y - (panel_size.y - size.y / ink_ss)) * ink_ss;
+    return q / size;
+}
 float inkAt(sampler2D t, vec2 size, vec2 pp) {
-    if (pp.x < 0.0 || pp.y < 0.0 || pp.x >= size.x || pp.y >= size.y) return 0.0;
-    return texelFetch(t, ivec2(pp), 0).r;
+    vec2 uv = contentUV(size, pp);
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return 0.0;
+    return texture(t, uv).r;
 }
 vec4 accAt(sampler2D t, vec2 size, vec2 pp) {
-    if (pp.x < 0.0 || pp.y < 0.0 || pp.x >= size.x || pp.y >= size.y) return vec4(0.0);
-    return texelFetch(t, ivec2(pp), 0);
+    vec2 uv = contentUV(size, pp);
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec4(0.0);
+    vec4 c = texture(t, uv);
+    return vec4(c.rgb * c.a, c.a);      // straight alpha in, premultiplied out
 }
 
 void main() {
@@ -525,6 +534,7 @@ class GlassRenderer:
         self.prog["viz_alpha"].value = 0.0
         self.prog["n_lens"].value = 0
         self.prog["ambient"].value = (0.0, 0.0, 0.0, 0.0)
+        self.prog["ink_ss"].value = 1.0
         self.prog["ambient2"].value = (0.0, 0.0, 0.0)
         self.prog["ptr_target"].value = -1
         self.prog["ptr_alpha"].value = 0.0
@@ -542,15 +552,14 @@ class GlassRenderer:
         return self.W - self.sp - int(round(w))   # right-aligned, so a narrower panel stays in the corner
 
     def _textures(self, ink, accent, pic):
+        """Layers go up as plain bytes — no float maths, no premultiply on the CPU."""
         ink = np.ascontiguousarray(np.asarray(ink, np.uint8))
         h, w = ink.shape
         out = [ink]
         for layer in (accent, pic):
-            if layer is None:
-                layer = np.zeros((h, w, 4), np.uint8)
-            a = np.asarray(layer, np.float32)
-            a[..., :3] *= a[..., 3:4] / 255
-            out.append(np.ascontiguousarray(a.astype(np.uint8)))
+            a = np.zeros((h, w, 4), np.uint8) if layer is None else np.ascontiguousarray(
+                np.asarray(layer, np.uint8))
+            out.append(a)
         return out
 
     def set_content(self, ink, accent, pic=None, instant=False):
@@ -560,7 +569,7 @@ class GlassRenderer:
         new = []
         for data, comps in ((ink, 1), (acc, 4), (pic, 4)):
             t = self.ctx.texture((w, h), comps, data.tobytes(), alignment=1)
-            t.filter = (self.ctx.NEAREST, self.ctx.NEAREST)
+            t.filter = (self.ctx.LINEAR, self.ctx.LINEAR)
             new.append(t)
         layers = [self.inks, self.accs, self.pics]
         for lst, t in zip(layers, new):
@@ -577,13 +586,16 @@ class GlassRenderer:
     def replace_content(self, ink, accent, pic=None):
         """Refresh the current content in place (live numbers) without a crossfade."""
         ink_a, acc_a, pic_a = self._textures(ink, accent, pic)
-        h, w = ink_a.shape
+        h, w = ink_a.shape[:2]
         if self.inks[1] is None or self.inks[1].size != (w, h):
             return self.set_content(ink, accent, pic, instant=True)
         self.inks[1].write(ink_a.tobytes())
         self.accs[1].write(acc_a.tobytes())
         self.pics[1].write(pic_a.tobytes())
         self._last_key = None
+
+    def set_supersample(self, ss):
+        self.prog["ink_ss"].value = float(ss)
 
     def set_ambient(self, rgba, bottom=None):
         self.prog["ambient"].value = tuple(float(v) for v in rgba)
