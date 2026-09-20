@@ -208,6 +208,9 @@ const vec2 TAPS[12] = vec2[](vec2(-0.326,-0.406), vec2(-0.840,-0.074), vec2(-0.6
 vec3 at(vec2 px, float lod) { return textureLod(bg, px / bg_size, lod).bgr; }
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
+const float SQUIRCLE_N = 2.2;      // fitted against figma-squircle, 60 % corner smoothing
+const float SQUIRCLE_K = 1.08;     // radius factor that goes with it
+
 float sdShape(vec2 p, vec2 c, vec2 hs, float r, float n) {
     vec2 q = abs(p - c) - hs + vec2(r);
     vec2 qp = max(q, vec2(0.0)) / max(r, 1e-3);
@@ -261,8 +264,10 @@ float smin(float a, float b, float k) {
 float lensSd(int i, vec2 p) {
     vec4 R = L_rect[i];
     vec2 c = (R.xy + R.zw) * 0.5, hs = (R.zw - R.xy) * 0.5;
-    float r = min(L_a[i].x, min(hs.x, hs.y));
-    float d = sdShape(p, c, hs, r, L_d[i].y);
+    float n = L_d[i].y >= 4.0 ? SQUIRCLE_N : L_d[i].y;            // 5 = "squircle, please"
+    float k = L_d[i].y >= 4.0 ? SQUIRCLE_K : 1.0;
+    float r = min(L_a[i].x * k, min(hs.x, hs.y));
+    float d = sdShape(p, c, hs, r, n);
     if (i == ptr_target) d = smin(d, sdPointer(p), ptr_k);   // liquid bridge to the pointer
     return d;
 }
@@ -288,9 +293,9 @@ void main() {
     vec2 w = gl_FragCoord.xy;
     vec2 pp = w - panel_pos;                         // panel-local px
     vec2 pc = panel_size * 0.5;
-    float sdP = sdShape(pp, pc, pc, panel_r, 5.0);
+    float sdP = sdShape(pp, pc, pc, panel_r * SQUIRCLE_K, SQUIRCLE_N);
     float mask = clamp(0.5 - sdP / 1.3, 0.0, 1.0);
-    float sdS = sdShape(pp - vec2(0.0, 8.0 * S), pc, pc, panel_r, 5.0);
+    float sdS = sdShape(pp - vec2(0.0, 8.0 * S), pc, pc, panel_r * SQUIRCLE_K, SQUIRCLE_N);
     float shadow = 0.30 * (1.0 - smoothstep(-12.0 * S, 20.0 * S, sdS));
     if (mask <= 0.0) { frag = vec4(0.0, 0.0, 0.0, shadow); return; }
 
@@ -300,7 +305,7 @@ void main() {
     float rim = 0.0, face = 0.0, glow = 0.0;
     vec3 tint = vec3(0.0); float tint_a = 0.0;
 
-    vec2 nP = nShape(pp, pc, pc, panel_r, 5.0);
+    vec2 nP = nShape(pp, pc, pc, panel_r * SQUIRCLE_K, SQUIRCLE_N);
     float depth = max(-sdP, 0.0);
     float t = clamp(1.0 - depth / (28.0 * S), 0.0, 1.0) * clamp(0.5 - sdP, 0.0, 1.0);
     d += nP * (32.0 * S) * pow(t, 2.2);
