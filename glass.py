@@ -535,6 +535,12 @@ class GlassRenderer:
     def panel_y(self, h):
         return self.H - self.sp - h
 
+    def panel_x(self, w):
+        return self.W - self.sp - int(round(w))   # right-aligned, so a narrower panel stays in the corner
+
+    def panel_x(self, w):
+        return self.W - self.sp - int(round(w))   # right-aligned, so a narrower panel stays in the corner
+
     def _textures(self, ink, accent, pic):
         ink = np.ascontiguousarray(np.asarray(ink, np.uint8))
         h, w = ink.shape
@@ -615,7 +621,7 @@ class GlassRenderer:
         self.prog["bands"].value = tuple(float(b) for b in bands)
         self.prog["viz_alpha"].value = float(alpha)
 
-    def capture(self, win_x, win_y, panel_h, force=False):
+    def capture(self, win_x, win_y, panel_w, panel_h, force=False):
         """Refresh the background copy. Returns True if a new frame should be drawn."""
         sp, M = self.sp, self.M
         h = int(round(panel_h))
@@ -623,17 +629,17 @@ class GlassRenderer:
         ch, cw = h + 2 * M, self.cap.shape[1]
         self.stats = getattr(self, "stats", {})
         tb = time.perf_counter()
-        key = (win_x, win_y, h)
+        key = (win_x, win_y, h, int(round(panel_w)))
         moved = key != self._last_key
         changed = self.source.grab(win_x + sp - M, win_y + py - M, cw, ch, self.cap, moved)
         self._last_key = key
         self.stats["capture"] = time.perf_counter() - tb
         return force or moved or changed
 
-    def render(self, hwnd, win_x, win_y, panel_h, fade, light, glassiness):
+    def render(self, hwnd, win_x, win_y, panel_w, panel_h, fade, light, glassiness):
         S, sp, M = self.S, self.sp, self.M
-        h = int(round(panel_h))
-        py = self.panel_y(h)
+        h, pw = int(round(panel_h)), int(round(panel_w))
+        py, px = self.panel_y(h), self.panel_x(pw)
         cap = self.cap
         ch, cw = h + 2 * M, cap.shape[1]
         t0 = time.perf_counter()
@@ -651,8 +657,8 @@ class GlassRenderer:
         pr["ink1_size"].value = self.inks[1].size
         pr["fade"].value = float(fade)
         pr["cap_origin"].value = (float(M - sp), float(M - py))
-        pr["panel_pos"].value = (float(sp), float(py))
-        pr["panel_size"].value = (float(self.w), float(h))
+        pr["panel_pos"].value = (float(px), float(py))
+        pr["panel_size"].value = (float(pw), float(h))
         pr["light"].value = tuple(float(v) for v in light)
         pr["glassiness"].value = float(glassiness)
         self.fbo.use()

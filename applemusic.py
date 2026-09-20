@@ -5,6 +5,7 @@ Apple has no public API for the Windows app, so this drives the real Apple Music
   * play      — opens the song in Apple Music (musics:// link) and presses that song's own
                 "Play “…”" entry through Windows UI Automation
   * playlists — read from the app's sidebar; playing one selects it and presses Play
+  * queue     — "Playing Next" read out of the app's queue panel
 
 Speed: the app only builds its page while it's actually on screen, so during an action its
 window is made fully transparent and click-through ("ghosted") instead of minimised — Windows
@@ -47,8 +48,9 @@ def store_country():
 
 class AppleMusic:
     def __init__(self, refocus=None):
-        self.results = []          # [{title, artist, album, url, art}]
+        self.results = []          # [{title, artist, album, url, art, kind}]
         self.playlists = []        # [name]
+        self.queue = []            # [{title, artist}] — Apple Music's Playing Next
         self.status = ""           # short message for the UI ("Searching…")
         self.version = 0           # bumps whenever results / playlists / status change
         self.country = store_country()
@@ -68,13 +70,16 @@ class AppleMusic:
 
     def prefetch(self, i):
         """Pointer is resting on result i: load its page in the background."""
-        if 0 <= i < len(self.results) and self.results[i]["url"] != self.page_url and self.jobs.empty():
+        if 0 <= i < len(self.results) and self.results[i].get("kind") == "song" \
+                and self.results[i]["url"] != self.page_url and self.jobs.empty():
             self.jobs.put(("prefetch", self.results[i]))
 
     def play_result(self, i):
         if 0 <= i < len(self.results):
-            self._set_status(f"Playing “{self.results[i]['title']}”…")
-            self.jobs.put(("play_song", self.results[i]))
+            r = self.results[i]
+            self._set_status(f"Playing “{r['title']}”…")
+            self.jobs.put(("play_playlist" if r.get("kind") == "playlist" else "play_song",
+                           r["title"] if r.get("kind") == "playlist" else r))
 
     def play_playlist(self, name):
         self._set_status(f"Playing “{name}”…")
@@ -82,6 +87,14 @@ class AppleMusic:
 
     def refresh_playlists(self):
         self.jobs.put(("playlists", None))
+
+    def refresh_queue(self):
+        self.jobs.put(("queue", None))
+
+    def play_queue(self, i):
+        if 0 <= i < len(self.queue):
+            self._set_status(f"Playing \u201c{self.queue[i]['title']}\u201d\u2026")
+            self.jobs.put(("play_queue", i))
 
     def _set_status(self, s):
         self.status = s
@@ -110,6 +123,11 @@ class AppleMusic:
                         self._set_status("")
                     elif job == "playlists":
                         self._read_playlists()
+                    elif job == "queue":
+                        self._read_queue()
+                    elif job == "play_queue":
+                        self._play_queue(arg)
+                        self._set_status("")
                 except Exception as e:
                     core.log(f"applemusic {job}: {e!r}")
                     self.page_url = None
@@ -132,10 +150,14 @@ class AppleMusic:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(8) as ex:
             arts = list(ex.map(art, tracks))
-        self.results = [{"title": t.get("trackName", ""), "artist": t.get("artistName", ""),
-                         "album": t.get("collectionName", ""), "url": t["trackViewUrl"], "art": a}
-                        for t, a in zip(tracks, arts)]
-        self._set_status("" if self.results else "No songs found.")
+        songs = [{"title": t.get("trackName", ""), "artist": t.get("artistName", ""),
+                  "album": t.get("collectionName", ""), "url": t["trackViewUrl"], "art": a, "kind": "song"}
+                 for t, a in zip(tracks, arts)]
+        low = term.lower()
+        mine = [{"title": n, "artist": "Your playlist", "album": "", "url": None, "art": None,
+                 "kind": "playlist"} for n in self.playlists if low in n.lower()][:4]
+        self.results = mine + songs
+        self._set_status("" if self.results else "Nothing found.")
 
     # ── the Apple Music window ──
     def _window(self, launch=True):
@@ -272,6 +294,75 @@ class AppleMusic:
                 names.append(it.Name)
         self.playlists = names
         self.version += 1
+
+    def _queue_panel(self, w, want_open):
+        """Toggle Apple Music's Playing Next panel."""
+        btn = w.ButtonControl(searchDepth=10, AutomationId="PlayQueueToggleButton")
+        if not btn.Exists(1):
+            return False
+        tog = btn.GetTogglePattern()
+        is_open = bool(tog and tog.ToggleState == 1)
+        if is_open != want_open:
+            (tog.Toggle() if tog else btn.GetLegacyIAccessiblePattern().DoDefaultAction())
+            time.sleep(0.9)
+        return True
+
+    def _read_queue(self):
+        w = self._window(launch=False)
+        if w is None:
+            return
+        with self._ghost(w):
+            if not self._queue_panel(w, True):
+                return
+            items = []
+
+            def walk(c, d=0):
+                if d > 18:
+                    return
+                for ch in c.GetChildren():
+                    if ch.ControlTypeName == "ListItemControl" and " \u2014 " in (ch.Name or ""):
+                        texts = []
+
+                        def grab(x, dd=0):
+                            if dd > 4:
+                                return
+                            for k in x.GetChildren():
+                                if k.ControlTypeName == "TextControl" and k.Name and len(k.Name) > 1 \
+                                        and ord(k.Name[0]) < 0x10000:
+                                    texts.append(k.Name)
+                                grab(k, dd + 1)
+                        grab(ch)
+                        if texts:
+                            items.append({"title": texts[0],
+                                          "artist": " \u2014 ".join(texts[1:3]) if len(texts) > 1 else ""})
+                    walk(ch, d + 1)
+            walk(w)
+            self.queue = items[:40]
+            self._queue_panel(w, False)
+        self.version += 1
+
+    def _play_queue(self, index):
+        w = self._window()
+        with self._ghost(w):
+            if not self._queue_panel(w, True):
+                return
+            items = []
+
+            def walk(c, d=0):
+                if d > 18:
+                    return
+                for ch in c.GetChildren():
+                    if ch.ControlTypeName == "ListItemControl" and " \u2014 " in (ch.Name or ""):
+                        items.append(ch)
+                    walk(ch, d + 1)
+            walk(w)
+            if index < len(items):
+                lp = items[index].GetLegacyIAccessiblePattern()
+                if lp:
+                    lp.DoDefaultAction()      # double click = play from here
+                    time.sleep(0.4)
+            self._queue_panel(w, False)
+        self.jobs.put(("queue", None))
 
     def _play_playlist(self, name):
         w = self._window()

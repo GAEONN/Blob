@@ -129,6 +129,10 @@ def album_tint(art):
     return ((float(top[0]), float(top[1]), float(top[2]), 0.24), tuple(float(v) for v in bottom))
 
 
+def S_of(panel):
+    return panel.S
+
+
 def rect_gap(x, y, rect):
     """Distance from a point to a rectangle (0 inside)."""
     dx = max(rect[0] - x, 0, x - rect[2])
@@ -305,6 +309,7 @@ class Springs(dict):
 # ─────────────────────────── panel ───────────────────────────
 PAGES = [("blob", "Blob"), ("sound", "Sound"), ("music", "Music"), ("settings", "Settings")]
 POINTERS = [("arrow", "Arrow"), ("triangle", "Triangle"), ("droplet", "Droplet"), ("system", "System")]
+SIZES = [("regular", "Regular"), ("compact", "Compact")]
 
 
 class Panel:
@@ -313,11 +318,13 @@ class Panel:
 
     TOP = 56    # room taken by the tab bar (which sits at the bottom)
     CONTENT = 18  # content starts this far below the top edge
+    WIDE, NARROW = 340, 248
 
     def __init__(self, S):
         self.S = S
         self.f = Fonts(S)
-        self.w = round(340 * S)
+        self.compact = False
+        self.w = round(self.WIDE * S)
         self.page = "blob"
         self.music_view = "now"
         self.query = ""
@@ -327,18 +334,31 @@ class Panel:
         self.rects = {}
         self.sliders = {}
 
+    def set_compact(self, compact):
+        self.compact = compact
+        self.w = round((self.NARROW if compact else self.WIDE) * S_of(self))
+
     def height(self, s, page=None):
-        page = page or self.page
-        if page == "sound":
-            return round((self.TOP + 462) * self.S)
-        if page == "settings":
-            return round((self.TOP + 250) * self.S)
+        page, c = page or self.page, self.compact
         if page == "music":
-            return round((self.TOP + 470) * self.S)
-        base = 292
-        if self.details_open and s:
+            v = self.music_view
+            if v == "art":
+                return round((self.TOP + 44 + (self.w / self.S - 2 * self.pad_u)) * self.S)
+            if v in ("search", "queue"):
+                return round((self.TOP + (330 if c else 470)) * self.S)
+            return round((self.TOP + (132 if c else 470)) * self.S)
+        if page == "sound":
+            return round((self.TOP + (150 if c else 462)) * self.S)
+        if page == "settings":
+            return round((self.TOP + (236 if c else 312)) * self.S)
+        base = 152 if c else 292
+        if self.details_open and s and not c:
             base = 286 + len(self.detail_rows(s)) * 24 + 16
         return round((base + self.TOP) * self.S)
+
+    @property
+    def pad_u(self):
+        return 14 if self.compact else 22
 
     def max_height(self):
         return round((self.TOP + 300 + 16 * 24) * self.S)
@@ -451,22 +471,23 @@ class Panel:
         self.controls.append(("toggle", key, box, on))
 
     # ── pages ──
-    def draw(self, s, snd, glassiness, startup, pointer="arrow", media=None, seek=None):
+    def draw(self, s, snd, glassiness, startup, pointer="arrow", media=None, seek=None, captureable=False):
         S, W = self.S, self.w
         H = self.height(s)
         self._begin(H)
-        pad = 22 * S
+        pad = self.pad_u * S
         # tab bar lives at the bottom: the panel is bottom-anchored, so it never moves or resizes
-        self.segmented("page", PAGES, self.page, (pad, H - 50 * S, W - pad, H - 16 * S), 13)
+        self.segmented("page", PAGES, self.page, (pad, H - 50 * S, W - pad, H - 16 * S),
+                       11 if self.compact else 13)
         top = self.CONTENT * S
         if self.page == "sound":
-            self._sound(snd, pad, top)
+            (self._sound_compact if self.compact else self._sound)(snd, pad, top)
         elif self.page == "settings":
-            self._settings(glassiness, startup, pointer, pad, top)
+            self._settings(glassiness, startup, pointer, pad, top, captureable)
         elif self.page == "music":
             self._music(media, snd, seek, pad, top)
         else:
-            self._blob(s, pad, top)
+            (self._blob_compact if self.compact else self._blob)(s, pad, top)
         return self.ink, self.accent, self.controls
 
     def fit(self, text, size, style, max_w):
@@ -495,28 +516,18 @@ class Panel:
         view = self.music_view
         if view == "search":
             return self._music_search(pad, top)
-        if view == "playlists":
-            return self._music_playlists(pad, top)
+        if view == "queue":
+            return self._music_queue(pad, top)
+        if view == "art":
+            return self._music_art(m, pad, top)
+        if self.compact:
+            return self._music_mini(m, seek, pad, top)
         S, W = self.S, self.w
         px = lambda v: top + v * S
         L = self.label
-        # big artwork, Apple Music style
         a = round(220 * S)
         ax, ay = round((W - a) / 2), round(px(4))
-        art = m.art if (m and m.active) else None
-        if art is not None:
-            iw, ih = art.size
-            side = min(iw, ih)  # centre-crop wide video thumbnails instead of squashing them
-            img = art.crop(((iw - side) // 2, (ih - side) // 2, (iw + side) // 2, (ih + side) // 2))
-            img = img.resize((a, a), Image.LANCZOS).convert("RGBA")
-            img.putalpha(Image.fromarray((glass.shape_mask(a, a, 26 * S) * 255).astype(np.uint8)))
-            self.pic.alpha_composite(img, (ax, ay))
-        else:
-            self.static((ax, ay, ax + a, ay + a), 26 * S, strength=8 * S, bevel=16 * S, rim=0.8, frost=1.0,
-                        lift=0.12, n=5.0)
-            self.di.text((ax + a / 2, ay + a / 2), "\uEC4F", font=self.f.icon(44), fill=140, anchor="mm")
-        self.static((ax, ay, ax + a, ay + a), 26 * S, strength=4 * S, bevel=8 * S, rim=1.0, n=5.0)
-
+        self._artwork(m, ax, ay, a, 26 * S, 44)
         ty = ay + a + 18 * S
         tw = W - 2 * pad - 80 * S
         if m and m.active:
@@ -525,28 +536,12 @@ class Panel:
             L(pad, ty + 26 * S, self.fit(sub or m.source, 13, "Regular", tw), 13, "Regular", 190)
         else:
             L(pad, ty, "Not playing", 18, "Semibold Text", 255)
-            L(pad, ty + 26 * S, "Search or pick a playlist to start.", 13, "Regular", 170)
-        self.glass_button("mview:playlists", W - pad - 15 * S, ty + 18 * S, 15 * S, "\uE8FD", 11, always=True)
+            L(pad, ty + 26 * S, "Search for something to start.", 13, "Regular", 170)
+        self.glass_button("mview:queue", W - pad - 15 * S, ty + 18 * S, 15 * S, "\uE8FD", 11, always=True)
         self.glass_button("mview:search", W - pad - 52 * S, ty + 18 * S, 15 * S, "\uE721", 11, always=True)
 
-        # progress
         py_ = ty + 66 * S
-        dur = m.duration if (m and m.active) else 0.0
-        pos = (seek * dur if seek is not None else m.pos_now()) if dur else 0.0
-        frac = pos / dur if dur > 0 else 0.0
-        if m and m.active and m.can_seek and dur > 0:
-            self.slider("seek", frac, pad + 12 * S, W - pad - 12 * S, py_)
-        else:
-            th = 6 * S
-            self.static((pad + 12 * S, py_ - th / 2, W - pad - 12 * S, py_ + th / 2), th / 2, frost=1.0, lift=0.05)
-            if frac > 0:
-                self.ink_shape((pad + 12 * S, py_ - th / 2, pad + 12 * S + (W - 2 * pad - 24 * S) * frac,
-                                py_ + th / 2), th / 2, 200)
-        fmt = lambda t: f"{int(t // 60)}:{int(t % 60):02d}"
-        L(pad + 12 * S, py_ + 16 * S, fmt(pos) if dur else "", 11, "Regular", 150)
-        L(W - pad - 12 * S, py_ + 16 * S, ("-" + fmt(max(0.0, dur - pos))) if dur else "", 11, "Regular", 150, "ra")
-
-        # transport
+        self._progress(m, seek, pad + 12 * S, W - pad - 12 * S, py_, times=True)
         cy = py_ + 62 * S
         playing = bool(m and m.playing)
         self.glass_button("media:previous", W / 2 - 84 * S, cy, 24 * S, "\uE892", 16)
@@ -554,11 +549,78 @@ class Panel:
         self.glass_button("media:next", W / 2 + 84 * S, cy, 24 * S, "\uE893", 16)
         self._volume_row(snd, pad, cy + 58 * S)
 
+    def _music_mini(self, m, seek, pad, top):
+        """Mini player: artwork, one line of text, transport — for a screen corner."""
+        S, W = self.S, self.w
+        px = lambda v: top + v * S
+        L = self.label
+        a = round(54 * S)
+        self._artwork(m, round(pad), round(px(2)), a, 13 * S, 20)
+        tx = pad + a + 12 * S
+        tw = W - pad - tx - 58 * S      # leave room for the search / queue buttons
+        if m and m.active:
+            L(tx, px(8), self.fit(m.title or "", 13, "Semibold Text", tw), 13, "Semibold Text", 255)
+            L(tx, px(26), self.fit(m.artist or m.source, 11, "Regular", tw), 11, "Regular", 180)
+        else:
+            L(tx, px(8), "Not playing", 13, "Semibold Text", 255)
+            L(tx, px(26), "Tap search to start", 11, "Regular", 170)
+        self._progress(m, seek, pad, W - pad, px(66), times=False)
+        cy = px(96)
+        playing = bool(m and m.playing)
+        self.glass_button("media:previous", pad + 22 * S, cy, 15 * S, "\uE892", 11)
+        self.glass_button("media:toggle", W / 2, cy, 20 * S, "\uE769" if playing else "\uE768", 13, always=True)
+        self.glass_button("media:next", W - pad - 22 * S, cy, 15 * S, "\uE893", 11)
+        self.glass_button("mview:search", W - pad - 22 * S, px(20), 13 * S, "\uE721", 10, always=True)
+        self.glass_button("mview:queue", W - pad - 52 * S, px(20), 13 * S, "\uE8FD", 10, always=True)
+
+    def _music_art(self, m, pad, top):
+        """Just the artwork, Apple Music style. Click it again to go back."""
+        S, W = self.S, self.w
+        a = round(W - 2 * pad)
+        self._artwork(m, round(pad), round(top), a, 28 * S, 60)
+        self._progress(m, None, pad, W - pad, top + a + 22 * S, times=False)
+
+    def _artwork(self, m, ax, ay, a, radius, glyph_size):
+        """Album art as a squircle with a glass rim; clicking it opens the artwork view."""
+        art = m.art if (m and m.active) else None
+        if art is not None:
+            iw, ih = art.size
+            side = min(iw, ih)   # centre-crop wide video thumbnails instead of squashing them
+            img = art.crop(((iw - side) // 2, (ih - side) // 2, (iw + side) // 2, (ih + side) // 2))
+            img = img.resize((a, a), Image.LANCZOS).convert("RGBA")
+            img.putalpha(Image.fromarray((glass.shape_mask(a, a, radius) * 255).astype(np.uint8)))
+            self.pic.alpha_composite(img, (ax, ay))
+        else:
+            self.static((ax, ay, ax + a, ay + a), radius, strength=8 * self.S, bevel=16 * self.S, rim=0.8,
+                        frost=1.0, lift=0.12, n=5.0)
+            self.di.text((ax + a / 2, ay + a / 2), "\uEC4F", font=self.f.icon(glyph_size), fill=140, anchor="mm")
+        self.static((ax, ay, ax + a, ay + a), radius, strength=4 * self.S, bevel=8 * self.S, rim=1.0, n=5.0)
+        self.rects["mview:" + ("now" if self.music_view == "art" else "art")] = (ax, ay, ax + a, ay + a)
+
+    def _progress(self, m, seek, x0, x1, y, times=True):
+        S = self.S
+        dur = m.duration if (m and m.active) else 0.0
+        pos = (seek * dur if seek is not None else m.pos_now()) if dur else 0.0
+        frac = pos / dur if dur > 0 else 0.0
+        if m and m.active and m.can_seek and dur > 0:
+            self.slider("seek", frac, x0, x1, y)
+        else:
+            th = 6 * S
+            self.static((x0, y - th / 2, x1, y + th / 2), th / 2, frost=1.0, lift=0.05)
+            if frac > 0:
+                self.ink_shape((x0, y - th / 2, x0 + (x1 - x0) * frac, y + th / 2), th / 2, 200)
+        if times:
+            fmt = lambda t: f"{int(t // 60)}:{int(t % 60):02d}"
+            self.label(x0, y + 16 * S, fmt(pos) if dur else "", 11, "Regular", 150)
+            self.label(x1, y + 16 * S, ("-" + fmt(max(0.0, dur - pos))) if dur else "", 11, "Regular", 150, "ra")
+
     def _back_row(self, pad, top, title=None):
         S = self.S
-        self.glass_button("mview:now", pad + 16 * S, top + 20 * S, 16 * S, "\uE72B", 11, always=True)
+        r = 13 * S if self.compact else 16 * S
+        self.glass_button("mview:now", pad + r, top + 20 * S, r, "\uE72B", 10 if self.compact else 11, always=True)
         if title:
-            self.label(pad + 44 * S, top + 20 * S, title, 16, "Semibold Text", 255, "lm")
+            self.label(pad + 2 * r + 12 * S, top + 20 * S, title, 14 if self.compact else 16, "Semibold Text",
+                       255, "lm")
 
     def _list_rows(self, key, n, row_h, top, bottom):
         """Visible slice of a scrollable list: yields (index, y)."""
@@ -578,64 +640,108 @@ class Panel:
         S, W = self.S, self.w
         am, L = self.am, self.label
         self._back_row(pad, top)
-        box = (pad + 40 * S, top + 2 * S, W - pad, top + 38 * S)
+        left = pad + (34 if self.compact else 40) * S
+        box = (left, top + 2 * S, W - pad, top + 38 * S)
         self.static(box, (box[3] - box[1]) / 2, strength=5 * S, bevel=9 * S, rim=0.8, frost=1.0, lift=0.07)
         self.rects["searchbox"] = box
-        self.di.text((box[0] + 16 * S, (box[1] + box[3]) / 2), "\uE721", font=self.f.icon(10), fill=150, anchor="lm")
-        tx = box[0] + 34 * S
+        self.di.text((box[0] + 14 * S, (box[1] + box[3]) / 2), "\uE721", font=self.f.icon(10), fill=150, anchor="lm")
+        tx = box[0] + 30 * S
+        size = 13 if self.compact else 14
         if self.query:
-            shown = self.fit(self.query, 14, "Regular", box[2] - tx - 16 * S)
-            L(tx, (box[1] + box[3]) / 2, shown, 14, "Regular", 255, "lm")
-            cx = tx + self.f.get(14).getlength(shown) + 2 * S
+            shown = self.fit(self.query, size, "Regular", box[2] - tx - 14 * S)
+            L(tx, (box[1] + box[3]) / 2, shown, size, "Regular", 255, "lm")
+            cx = tx + self.f.get(size).getlength(shown) + 2 * S
         else:
-            L(tx, (box[1] + box[3]) / 2, "Search Apple Music", 14, "Regular", 120, "lm")
+            L(tx, (box[1] + box[3]) / 2, "Search Apple Music", size, "Regular", 120, "lm")
             cx = tx
-        if int(time.time() * 2) % 2 == 0:  # caret
+        if int(time.time() * 2) % 2 == 0:
             self.ink_shape((cx, box[1] + 10 * S, cx + 1.5 * S, box[3] - 10 * S), 0.75 * S, 230)
-        list_top, list_bottom = top + 52 * S, self.height(None) - 90 * S
+        row_h = 44 if self.compact else self.ROW_SEARCH
+        list_top, list_bottom = top + 50 * S, self.height(None) - (76 if self.compact else 90) * S
         results = am.results if am else []
-        for i, y in self._list_rows("search", len(results), self.ROW_SEARCH, list_top, list_bottom):
+        for i, y in self._list_rows("search", len(results), row_h, list_top, list_bottom):
             r = results[i]
-            row = (pad - 8 * S, y, W - pad + 8 * S, y + (self.ROW_SEARCH - 4) * S)
+            row = (pad - 8 * S, y, W - pad + 8 * S, y + (row_h - 4) * S)
             self.rects[f"result:{i}"] = row
-            self.controls.append(("hover", f"result:{i}", row, 14 * S))
-            s40 = round(40 * S)
-            ay = round(y + 3 * S)
-            if r["art"] is not None:
-                img = r["art"].resize((s40, s40), Image.LANCZOS).convert("RGBA")
-                img.putalpha(Image.fromarray((glass.shape_mask(s40, s40, 9 * S) * 255).astype(np.uint8)))
-                self.pic.alpha_composite(img, (round(pad), ay))
-            tw = W - pad - (pad + 52 * S) - 8 * S
-            L(pad + 52 * S, y + 7 * S, self.fit(r["title"], 13, "Semibold Text", tw), 13, "Semibold Text", 255)
-            L(pad + 52 * S, y + 25 * S, self.fit(r["artist"] + " \u2014 " + r["album"], 12, "Regular", tw),
-              12, "Regular", 165)
+            self.controls.append(("hover", f"result:{i}", row, 13 * S))
+            th = round((36 if self.compact else 40) * S)
+            if r.get("art") is not None:
+                img = r["art"].resize((th, th), Image.LANCZOS).convert("RGBA")
+                img.putalpha(Image.fromarray((glass.shape_mask(th, th, 9 * S) * 255).astype(np.uint8)))
+                self.pic.alpha_composite(img, (round(pad), round(y + 3 * S)))
+            elif r.get("kind") == "playlist":
+                self.di.text((pad + th / 2, y + 3 * S + th / 2), "\uE8FD", font=self.f.icon(12), fill=170,
+                             anchor="mm")
+            tx2 = pad + th + 12 * S
+            tw = W - pad - tx2 - 8 * S
+            L(tx2, y + (5 if self.compact else 7) * S, self.fit(r["title"], 13, "Semibold Text", tw), 13,
+              "Semibold Text", 255)
+            sub = r["artist"] + ((" \u2014 " + r["album"]) if r.get("album") else "")
+            L(tx2, y + (23 if self.compact else 25) * S, self.fit(sub, 12, "Regular", tw), 12, "Regular", 165)
         msg = am.status if am else ""
         if not msg and not results:
-            msg = "Type a song or artist and press Enter."
-        L(pad, self.height(None) - 76 * S, msg, 12, "Regular", 165)
+            msg = "Type a song, artist or playlist, then Enter."
+        L(pad, self.height(None) - (64 if self.compact else 76) * S, msg, 12, "Regular", 165)
 
-    def _music_playlists(self, pad, top):
+    def _music_queue(self, pad, top):
         S, W = self.S, self.w
         am, L = self.am, self.label
-        self._back_row(pad, top, "Playlists")
-        names = am.playlists if am else []
-        list_top, list_bottom = top + 50 * S, self.height(None) - 90 * S
-        if not names:
-            L(pad, list_top + 10 * S, "Open Apple Music once so your playlists can load.", 12, "Regular", 165)
-        for i, y in self._list_rows("playlists", len(names), self.ROW_LIST, list_top, list_bottom):
-            row = (pad - 8 * S, y, W - pad + 8 * S, y + (self.ROW_LIST - 4) * S)
-            self.rects[f"playlist:{i}"] = row
-            self.controls.append(("hover", f"playlist:{i}", row, 12 * S))
-            self.di.text((pad + 8 * S, y + 17 * S), "\uE8FD", font=self.f.icon(10), fill=150, anchor="mm")
-            L(pad + 26 * S, y + 17 * S, self.fit(names[i], 13, "Regular", W - 2 * pad - 40 * S), 13, "Regular",
-              235, "lm")
-        L(pad, self.height(None) - 76 * S, am.status if am else "", 12, "Regular", 165)
+        self._back_row(pad, top, "Playing Next")
+        items = am.queue if am else []
+        row_h = 34 if self.compact else self.ROW_LIST
+        list_top, list_bottom = top + 48 * S, self.height(None) - (76 if self.compact else 90) * S
+        if not items:
+            L(pad, list_top + 10 * S, "Nothing queued up.", 12, "Regular", 165)
+        for i, y in self._list_rows("queue", len(items), row_h, list_top, list_bottom):
+            q = items[i]
+            row = (pad - 8 * S, y, W - pad + 8 * S, y + (row_h - 4) * S)
+            self.rects[f"queue:{i}"] = row
+            self.controls.append(("hover", f"queue:{i}", row, 12 * S))
+            L(pad + 4 * S, y + 4 * S, self.fit(q["title"], 13, "Semibold Text", W - 2 * pad - 16 * S), 13,
+              "Semibold Text", 235)
+            if not self.compact:
+                L(pad + 4 * S, y + 21 * S, self.fit(q["artist"], 11, "Regular", W - 2 * pad - 16 * S), 11,
+                  "Regular", 160)
+        L(pad, self.height(None) - (64 if self.compact else 76) * S, am.status if am else "", 12, "Regular", 165)
 
     def _volume_row(self, snd, pad, y):
         S, W = self.S, self.w
         self.di.text((pad + 6 * S, y), "\uE993", font=self.f.icon(12), fill=175, anchor="mm")
         self.di.text((W - pad - 6 * S, y), "\uE995", font=self.f.icon(12), fill=175, anchor="mm")
         self.slider("volume", snd.volume if snd.volume is not None else 0.5, pad + 30 * S, W - pad - 30 * S, y)
+
+    def _blob_compact(self, s, pad, top):
+        """Temperatures, fans and the fan mode, sized for a screen corner."""
+        S, W = self.S, self.w
+        px = lambda v: top + v * S
+        L = self.label
+        cpu, gpu, fans, ctl = s["cpu"], s["gpu"], s["fans"], s["control"]
+        col2 = W / 2 + 4 * S
+        L(pad, px(2), "CPU", 11)
+        L(pad, px(14), fmt_temp(cpu["temp"]), 30, "Semibold Display", 255 if cpu["temp"] else 105,
+          temp=cpu["temp"])
+        L(pad, px(54), "Fan " + fmt_rpm(fans[0]["rpm"]), 11)
+        asleep = gpu["state"] == "sleeping"
+        L(col2, px(2), "GPU · off" if asleep else "GPU", 11)
+        L(col2, px(14), "–" if asleep else fmt_temp(gpu["temp"]), 30, "Semibold Display",
+          105 if asleep else 255, temp=None if asleep else gpu["temp"])
+        if len(fans) > 1:
+            L(col2, px(54), "Fan " + fmt_rpm(fans[1]["rpm"]), 11)
+        self.di.rectangle((pad, px(80), W - pad, px(80) + max(1, round(S)) - 1), fill=45)
+        L(pad, px(90), "Fan mode", 11)
+        self.segmented("mode", MODES, ctl["mode"], (pad, px(106), W - pad, px(136)), 10,
+                       running=ctl["active"] if ctl["mode"] == "auto" else None)
+
+    def _sound_compact(self, snd, pad, top):
+        """On/off, boost and the spectrum — the rest lives in the regular size."""
+        S, W = self.S, self.w
+        px = lambda v: top + v * S
+        L = self.label
+        L(pad, px(12), "Boost", 13, "Semibold Text", 255, "lm")
+        L(W - pad - 58 * S, px(12), f"+{snd.boost_db:.0f} dB", 12, "Regular", 175, "rm")
+        self.toggle("sound", snd.enabled, W - pad - 48 * S, px(-2))
+        self.slider("boost", snd.boost, pad + 12 * S, W - pad - 12 * S, px(48))
+        self.controls.append(("viz", (pad, px(70), W - pad, px(120))))
 
     def _blob(self, s, pad, top):
         S, W = self.S, self.w
@@ -717,25 +823,35 @@ class Panel:
             msg = "Off · turn on to boost and shape your audio"
         L(pad, px(430), msg, 12, anchor="lm")
 
-    def _settings(self, glassiness, startup, pointer, pad, top):
+    def _settings(self, glassiness, startup, pointer, pad, top, captureable=False):
         S, W = self.S, self.w
-        px = lambda v: top + (v + 6) * S
+        c = self.compact
+        px = lambda v: top + (v + 4) * S
         L = self.label
-        L(pad, px(8), "Glass", 14, "Semibold Text", 255)
-        L(W - pad, px(8), "Clear" if glassiness < 0.08 else "Frosted" if glassiness > 0.85
-          else f"{round(glassiness * 100)}% frosted", 13, "Regular", 175, "ra")
-        self.slider("glass", glassiness, pad + 12 * S, W - pad - 12 * S, px(44))
-        L(pad, px(66), "Clear", 11, "Regular", 120)
-        L(W - pad, px(66), "Frosted", 11, "Regular", 120, "ra")
-        self.di.rectangle((pad, px(96), W - pad, px(96) + max(1, round(S)) - 1), fill=45)
-        L(pad, px(112), "Pointer", 14, "Semibold Text", 255)
-        self.segmented("pointer", POINTERS, pointer, (pad, px(138), W - pad, px(172)), 12)
-        self.di.rectangle((pad, px(188), W - pad, px(188) + max(1, round(S)) - 1), fill=45)
-        L(pad, px(218), "Start with Windows", 14, "Regular", 255, "lm")
-        self.toggle("startup", startup, W - pad - 48 * S, px(204))
+        L(pad, px(2), "Glass", 13 if c else 14, "Semibold Text", 255)
+        L(W - pad, px(2), "Clear" if glassiness < 0.08 else "Frosted" if glassiness > 0.85
+          else f"{round(glassiness * 100)}% frosted", 12, "Regular", 175, "ra")
+        self.slider("glass", glassiness, pad + 12 * S, W - pad - 12 * S, px(32))
+        L(pad, px(50), "Clear", 11, "Regular", 120)
+        L(W - pad, px(50), "Frosted", 11, "Regular", 120, "ra")
+
+        L(pad, px(84), "Size", 13 if c else 14, "Semibold Text", 255, "lm")
+        self.segmented("size", SIZES, "compact" if c else "regular",
+                       (W / 2 - 4 * S if c else W / 2 + 6 * S, px(70), W - pad, px(98)), 11)
+        y = 112
+        if not c:
+            L(pad, px(y), "Pointer", 14, "Semibold Text", 255)
+            self.segmented("pointer", POINTERS, pointer, (pad, px(y + 22), W - pad, px(y + 54)), 12)
+            y += 80
+
+        L(pad, px(y + 14), "Show in screen recordings", 12 if c else 14, "Regular", 255, "lm")
+        self.toggle("capture", captureable, W - pad - 48 * S, px(y))
+        L(pad, px(y + 30), "Glass stops updating while this is on.", 11, "Regular", 140)
+
+        L(pad, px(y + 62), "Start with Windows", 12 if c else 14, "Regular", 255, "lm")
+        self.toggle("startup", startup, W - pad - 48 * S, px(y + 48))
 
 
-# ─────────────────────────── app ───────────────────────────
 class App:
     def __init__(self):
         self.mon = engine.Monitor()
@@ -744,6 +860,7 @@ class App:
         self.media = NowPlaying()
         self.am = AppleMusic(refocus=lambda: user32.PostMessageW(self.hwnd, WM_APP_REFOCUS, 0, 0))
         self.hover_since = (None, 0.0)
+        self.last_queue = 0.0
         self.am_seen = -1
         self.hold_until = 0.0
         self.seek_value = None
@@ -757,9 +874,12 @@ class App:
         if os.environ.get("BLOB_QUERY"):
             self.panel.query = os.environ["BLOB_QUERY"]
             self.am.search(self.panel.query)
-        self.glass = glass.GlassRenderer(S, self.panel.w, self.panel.max_height())
+        # the window buffer is always sized for the wide panel; compact just draws narrower inside it
+        self.glass = glass.GlassRenderer(S, round(Panel.WIDE * S), self.panel.max_height())
         cfg = engine.load_config()
         self.glassiness = float(cfg.get("glass", 0.35))
+        self.captureable = bool(cfg.get("captureable", False))
+        self.panel.set_compact(os.environ.get("BLOB_COMPACT", "1" if cfg.get("compact") else "0") == "1")
         self.startup = startup_enabled()
         self.springs = Springs()
         self.controls, self.old_controls = [], []
@@ -798,7 +918,7 @@ class App:
         self.hwnd = user32.CreateWindowExW(0x80000 | 0x80 | 0x8, "BlobGlass", APP_NAME, 0x80000000,
                                            0, 0, 10, 10, None, None, hinst, None)
         # keep our own pixels out of the background grab (otherwise the glass refracts itself)
-        user32.SetWindowDisplayAffinity(self.hwnd, 0x11)  # WDA_EXCLUDEFROMCAPTURE
+        user32.SetWindowDisplayAffinity(self.hwnd, 0 if self.captureable else 0x11)
         self.glass.dump_path = os.environ.get("BLOB_DUMP")
         self.cur_hand = user32.LoadCursorW(None, 32649)
         self.cur_arrow = user32.LoadCursorW(None, 32512)
@@ -825,7 +945,8 @@ class App:
 
     def _draw_content(self, crossfade=False):
         ink, accent, controls = self.panel.draw(self.snap, self.sound, self.glassiness, self.startup,
-                                                self.pointer_style, self.media, self.seek_value)
+                                                self.pointer_style, self.media, self.seek_value,
+                                                self.captureable)
         pic = self.panel.pic
         if crossfade:
             # the tab bar is shared by every page, so its thumb slides instead of fading
@@ -838,6 +959,41 @@ class App:
         self.controls = controls
         h = self.springs.get("height", self.panel.height(self.snap), k=260, zeta=0.74)
         h.target = self.panel.height(self.snap)
+        self.frame_dirty = True
+
+    def set_compact(self, compact):
+        cfg = engine.load_config()
+        cfg["compact"] = compact
+        engine.save_config(cfg)
+        self.panel.set_compact(compact)
+        self.old_page_springs()
+        self.springs.pop("height", None)
+
+    def set_captureable(self, on):
+        """On: the panel shows up in screen recordings, but the glass freezes (it would otherwise
+        refract its own reflection). Off: live glass, invisible to capture."""
+        self.captureable = on
+        cfg = engine.load_config()
+        cfg["captureable"] = on
+        engine.save_config(cfg)
+        user32.SetWindowDisplayAffinity(self.hwnd, 0 if on else 0x11)
+        self.glass.source.frozen = on
+        if on:
+            self.refresh_backdrop()
+        self.frame_dirty = True
+
+    def refresh_backdrop(self):
+        """Grab one clean frame of what's behind the panel while it's briefly hidden."""
+        if not self.captureable:
+            return
+        was = self.visible
+        if was:
+            user32.ShowWindow(self.hwnd, 0)
+        self.glass.source.frozen = False
+        self.glass.capture(self.pos[0], self.pos[1], self.panel.w, self.springs["height"].x, force=True)
+        self.glass.source.frozen = True
+        if was:
+            user32.ShowWindow(self.hwnd, 4)   # SW_SHOWNOACTIVATE
         self.frame_dirty = True
 
     # ── visibility ──
@@ -857,6 +1013,8 @@ class App:
                         work.bottom - self.glass.H + self.glass.sp - m]
         self.last_frame = time.perf_counter()
         self.frame_dirty = True
+        if self.captureable:
+            self.refresh_backdrop()
         self.frame()
         user32.ShowWindow(self.hwnd, 5)
         user32.SetForegroundWindow(self.hwnd)
@@ -1010,6 +1168,9 @@ class App:
         self.last_frame = now
         self.springs.step(dt)
         fade = self.springs.get("fade", 1.0).x
+        if self.panel.page == "music" and self.panel.music_view == "queue" and not self.am.queue                 and now - self.last_queue > 3:
+            self.last_queue = now
+            self.am.refresh_queue()
         if self.panel.page == "music" and self.panel.music_view == "search":
             key, since = self.hover_since
             if self.hover != key:
@@ -1021,7 +1182,7 @@ class App:
             m = self.media
             seen = (m.art_version, m.playing, m.active, m.title)
             view = self.panel.music_view
-            live = (view == "now" and m.playing) or view == "search"  # progress / caret
+            live = (view in ("now", "art") and m.playing) or view == "search"  # progress / caret
             if seen != self.media_seen or self.am.version != self.am_seen or \
                     (live and now - self.last_text > (0.25 if view == "now" else 0.5)):
                 if seen != self.media_seen:
@@ -1034,7 +1195,7 @@ class App:
         animating = self.springs.moving or self.drag is not None or bool(self.slider_drag)             or abs(self.vel).max() > 0.5
         force = animating or viz_live or self.frame_dirty
         # cheap path: poll the screen; draw only if the background or anything on the panel changed
-        if not self.glass.capture(self.pos[0], self.pos[1], self.springs["height"].x, force):
+        if not self.glass.capture(self.pos[0], self.pos[1], self.panel.w, self.springs["height"].x, force):
             return
         self.frame_dirty = False
         tr = time.perf_counter()
@@ -1057,7 +1218,7 @@ class App:
         self.light += (target - self.light) * 0.25
         self.light /= np.linalg.norm(self.light) + 1e-6
         self.light = np.round(self.light, 3)
-        self.glass.render(self.hwnd, self.pos[0], self.pos[1], self.springs["height"].x, fade,
+        self.glass.render(self.hwnd, self.pos[0], self.pos[1], self.panel.w, self.springs["height"].x, fade,
                           tuple(self.light), self.glassiness)
         if fade >= 0.999 and self.old_controls:
             self.old_controls = []
@@ -1125,7 +1286,7 @@ class App:
 
     def panel_local(self, lp):
         h = int(round(self.springs["height"].x))
-        x = ctypes.c_short(lp & 0xFFFF).value - self.glass.sp
+        x = ctypes.c_short(lp & 0xFFFF).value - self.glass.panel_x(self.panel.w)
         y = ctypes.c_short((lp >> 16) & 0xFFFF).value - self.glass.panel_y(h)
         return x, y
 
@@ -1171,15 +1332,17 @@ class App:
             self.panel.scroll = {}
             crossfade = True
             self.old_page_springs()
-            if key == "playlists":
-                self.am.refresh_playlists()
+            if key == "queue":
+                self.am.refresh_queue()
         elif kind == "result":
             self.am.play_result(int(key))
             self.hold_until = time.time() + 10
-        elif kind == "playlist":
-            if 0 <= int(key) < len(self.am.playlists):
-                self.am.play_playlist(self.am.playlists[int(key)])
-                self.hold_until = time.time() + 10
+        elif kind == "queue":
+            self.am.play_queue(int(key))
+            self.hold_until = time.time() + 10
+        elif kind == "size":
+            self.set_compact(key == "compact")
+            crossfade = True
         elif kind == "searchbox":
             pass
         elif kind == "media":
@@ -1196,6 +1359,8 @@ class App:
             elif key == "startup":
                 set_startup(not startup_enabled())
                 self.startup = startup_enabled()
+            elif key == "capture":
+                self.set_captureable(not self.captureable)
         elif kind == "device":
             self.sound.next_output()
         elif kind == "fxquit":
@@ -1336,6 +1501,8 @@ class App:
                 if self.drag:
                     self.drag = None
                     user32.ReleaseCapture()
+                    if self.captureable:
+                        self.refresh_backdrop()
                 self._schedule(True)
                 return 0
             if msg == WM_SETCURSOR:
@@ -1343,7 +1510,7 @@ class App:
                 user32.ScreenToClient(hwnd, ctypes.byref(p))
                 lpv = (p.x & 0xFFFF) | ((p.y & 0xFFFF) << 16)
                 x, y = self.panel_local(lpv)
-                w, h = self.glass.w, int(round(self.springs["height"].x))
+                w, h = self.panel.w, int(round(self.springs["height"].x))
                 inside = 0 <= x < w and 0 <= y < h
                 glass_ptr = inside and self.pointer_style != "system"
                 user32.SetCursor(None if glass_ptr else self.cur_arrow)  # the glass pointer takes over

@@ -52,6 +52,17 @@ browser tab. Apple Music gets direct control: catalog search through Apple's pub
 and playback by driving the real Apple Music app through UI Automation while its window is kept
 invisible. Resting the pointer on a result preloads it, which brings a click down to about 1.4 s.
 
+## Sizes and the pointer
+
+**Regular** is the full pane. **Compact** (Settings → Size) is a narrow version for a screen
+corner while you play: temperatures and fan mode at a glance, a mini music player with artwork and
+transport, boost and the spectrum. Clicking the album art opens it as artwork only, Apple Music
+style; clicking it again goes back.
+
+Settings also holds **Show in screen recordings**. Off (the default) keeps the pane invisible to
+capture so the glass can refract live. On makes it visible to recorders, at the cost of freezing
+the glass to the backdrop captured when it appeared, since it would otherwise refract itself.
+
 ## Requirements
 
 * Windows 11, a GPU with OpenGL 3.3
