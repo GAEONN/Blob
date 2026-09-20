@@ -423,6 +423,60 @@ class Controller:
 
 
 # ─────────────────────────── Sampler ───────────────────────────
+class HWiNFOShared:
+    """HWiNFO publishes every sensor in shared memory when "Shared Memory Support" is enabled:
+    a header, then a table of readings (type, labels, unit, value) as fixed-size C structs."""
+
+    NAME = "Global\\HWiNFO_SENS_SM2"
+    # signature, version, revision, (padding), poll time, then the two table descriptors
+    HEADER = struct.Struct("<4sII4xqIIIIII")
+    LABEL_USER = 12 + 128        # after type / sensor index / reading id and the original label
+    UNIT = LABEL_USER + 128
+    VALUE = UNIT + 16 + 4        # doubles are 8-byte aligned, hence the padding
+    TEMPERATURE, FAN = 1, 3
+
+    def __init__(self):
+        self.values = {}
+        self.checked = 0.0
+
+    def poll(self):
+        now = time.time()
+        if now - self.checked < 2.0:
+            return self.values
+        self.checked = now
+        self.values = {}
+        try:
+            import mmap
+            with mmap.mmap(-1, self.HEADER.size, tagname=self.NAME, access=mmap.ACCESS_READ) as head:
+                sig, _ver, _rev, _poll, _s_off, _s_size, _s_num, r_off, r_size, r_num = \
+                    self.HEADER.unpack(head[:self.HEADER.size])
+            if sig not in (b"HWiS", b"SiWH") or r_size < self.VALUE + 8 or r_num <= 0:
+                return self.values
+            # Windows wants an explicit length, so map exactly as far as the reading table goes
+            with mmap.mmap(-1, r_off + r_size * r_num, tagname=self.NAME, access=mmap.ACCESS_READ) as mm:
+                temps, fans = {}, []
+                for i in range(min(r_num, 800)):
+                    base = r_off + i * r_size
+                    kind = struct.unpack_from("<I", mm, base)[0]
+                    if kind not in (self.TEMPERATURE, self.FAN):
+                        continue
+                    raw = mm[base + self.LABEL_USER:base + self.UNIT]
+                    label = raw.split(b"\x00")[0].decode("latin-1")
+                    value = struct.unpack_from("<d", mm, base + self.VALUE)[0]
+                    if kind == self.TEMPERATURE and 0 < value < 150:
+                        temps[label] = value
+                    elif kind == self.FAN and 0 < value < 20000:
+                        fans.append(value)
+            pick = lambda *keys: next((v for k, v in temps.items()
+                                       if any(x in k.lower() for x in keys)), None)
+            self.values = {"cpu": pick("cpu package", "cpu (tctl", "core max", "cpu"),
+                           "gpu": pick("gpu temperature", "gpu core"),
+                           "fans": [round(f) for f in fans[:3]]}
+        except Exception:
+            self.values = {}
+        return self.values
+
+
 class HardwareMonitorWMI:
     """Optional extra sensors from LibreHardwareMonitor / OpenHardwareMonitor, when the user
     happens to run one. That covers Intel and AMD machines, where Windows exposes nothing."""
@@ -490,6 +544,7 @@ class Monitor:
         })
         self.base_mhz = (psutil.cpu_freq().max if psutil.cpu_freq() else 0) or 2000
         self.hwm = HardwareMonitorWMI()
+        self.hwinfo = HWiNFOShared()
         self.controller = Controller(self.asus)
         # what this machine can actually do
         self.caps = {"fan_control": bool(self.asus.h) and os.environ.get("BLOB_NO_ASUS") != "1",
@@ -531,10 +586,10 @@ class Monitor:
         cpu_temp = a.get(a.CPU_TEMP) if asus_ok else None
         fans = ([{"name": "CPU fan", "rpm": a.fan_rpm(a.CPU_FAN)},
                  {"name": "GPU fan", "rpm": a.fan_rpm(a.GPU_FAN)}] if asus_ok else [])
-        extra = self.hwm.poll()
+        extra = self.hwm.poll() or self.hwinfo.poll()
         if cpu_temp is None and extra.get("cpu"):
             cpu_temp = round(extra["cpu"])
-            self.cpu_source = "hwmonitor"
+            self.cpu_source = "hwmonitor" if self.hwm.values else "hwinfo"
         if not fans and extra.get("fans"):
             fans = [{"name": f"Fan {i + 1}", "rpm": rpm} for i, rpm in enumerate(extra["fans"][:3])]
             self.caps["fans_readable"] = True
@@ -558,7 +613,7 @@ class Monitor:
         else:
             gstate = "unavailable" if awake is None else "idle"
         if not self.caps["nvidia"]:
-            temp = (self.hwm.poll() or {}).get("gpu")
+            temp = (self.hwm.poll() or self.hwinfo.poll() or {}).get("gpu")
             gstate = "active" if temp else "unavailable"
             self.nv_data = {"temp": round(temp)} if temp else {}
         gpu = {"state": gstate, "temp": self.nv_data.get("temp") if gstate in ("active", "idle") else None,

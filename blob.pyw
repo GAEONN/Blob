@@ -352,8 +352,9 @@ class Panel:
             bits.append("no NVIDIA sensors")
         src = (self.snap or {}).get("cpu_source")
         second = {"hwmonitor": "Temperatures come from LibreHardwareMonitor.",
-                  "zone": "Using the ACPI sensor. Run LibreHardwareMonitor for per-core temps and fans.",
-                  "none": "Run LibreHardwareMonitor for temperatures and fan speeds."}.get(src, "")
+                  "hwinfo": "Temperatures come from HWiNFO's shared memory.",
+                  "zone": "Using the ACPI sensor. LibreHardwareMonitor or HWiNFO adds CPU and fan sensors.",
+                  "none": "Run LibreHardwareMonitor or HWiNFO for temperatures and fan speeds."}.get(src, "")
         return ", ".join(bits) + ".\n" + second
 
     def set_compact(self, compact):
@@ -1171,8 +1172,9 @@ class App:
             bits.append("no NVIDIA sensors")
         src = (self.snap or {}).get("cpu_source")
         second = {"hwmonitor": "Temperatures come from LibreHardwareMonitor.",
-                  "zone": "Using the ACPI sensor. Run LibreHardwareMonitor for per-core temps and fans.",
-                  "none": "Run LibreHardwareMonitor for temperatures and fan speeds."}.get(src, "")
+                  "hwinfo": "Temperatures come from HWiNFO's shared memory.",
+                  "zone": "Using the ACPI sensor. LibreHardwareMonitor or HWiNFO adds CPU and fan sensors.",
+                  "none": "Run LibreHardwareMonitor or HWiNFO for temperatures and fan speeds."}.get(src, "")
         return ", ".join(bits) + ".\n" + second
 
     def set_compact(self, compact):

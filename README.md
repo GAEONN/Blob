@@ -69,15 +69,19 @@ Blob runs on any Windows 11 laptop; the parts that depend on hardware degrade in
 
 | Part | ASUS + NVIDIA | Anything else |
 | --- | --- | --- |
-| CPU temperature | ASUS ATKACPI | LibreHardwareMonitor if it's running, otherwise the ACPI thermal zone |
-| Fan speeds | ATKACPI | LibreHardwareMonitor, otherwise hidden |
+| CPU temperature | ASUS ATKACPI | LibreHardwareMonitor or HWiNFO if one is running, otherwise the ACPI thermal zone |
+| Fan speeds | ATKACPI | LibreHardwareMonitor or HWiNFO, otherwise hidden |
 | Fan modes | Silent / Balanced / Turbo | hidden, with a line saying why |
-| GPU | NVML (temp, load, power) | LibreHardwareMonitor for the temperature |
+| GPU | NVML (temp, load, power) | NVML on any NVIDIA card; otherwise a hardware monitor for the temperature |
 | Sound, Music, glass | full | full |
 
-Running [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) in the
-background is the one thing worth adding on an Intel or AMD machine: Blob picks its sensors up
-automatically. The Settings page says what it found. The Sound page needs
+On an Intel or AMD CPU, run one of these in the background and Blob picks its sensors up by itself:
+
+* [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) — read over WMI, nothing to configure.
+* [HWiNFO](https://www.hwinfo.com/) — read from its shared memory; switch on *Settings → Shared Memory Support*.
+
+CPUID **HWMonitor** is not usable: it shows sensors but offers nothing for other programs to read.
+The Settings page names whichever source Blob ended up using. The Sound page needs
 [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) and says so if it's missing.
 
 ## Requirements
