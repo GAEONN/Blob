@@ -330,6 +330,7 @@ class Panel:
         self.tabs_open = False     # the switcher expands when you reach for it
         self.tabs_t = 0.0          # animated 0..1 between resting pill and full set
         self.options = {}          # the small on/off settings, straight from the config file
+        self.hw_note = ""          # what this machine can and cannot report
         self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
@@ -339,6 +340,21 @@ class Panel:
         self.details_open = False
         self.rects = {}
         self.sliders = {}
+
+    def hardware_note(self):
+        caps = (self.snap or {}).get("caps", {})
+        if caps.get("fan_control") and caps.get("nvidia"):
+            return "ASUS fan control and NVIDIA sensors are active."
+        bits = []
+        if not caps.get("fan_control"):
+            bits.append("No ASUS fan interface: modes hidden")
+        if not caps.get("nvidia"):
+            bits.append("no NVIDIA sensors")
+        src = (self.snap or {}).get("cpu_source")
+        second = {"hwmonitor": "Temperatures come from LibreHardwareMonitor.",
+                  "zone": "Using the ACPI sensor. Run LibreHardwareMonitor for per-core temps and fans.",
+                  "none": "Run LibreHardwareMonitor for temperatures and fan speeds."}.get(src, "")
+        return ", ".join(bits) + ".\n" + second
 
     def set_compact(self, compact):
         self.compact = compact
@@ -845,7 +861,7 @@ class Panel:
         L(pad, px(2), "CPU", 11)
         L(pad, px(14), fmt_temp(cpu["temp"]), 30, "Semibold Display", 255 if cpu["temp"] else 105,
           temp=cpu["temp"])
-        L(pad, px(54), "Fan " + fmt_rpm(fans[0]["rpm"]), 11)
+        L(pad, px(54), ("Fan " + fmt_rpm(fans[0]["rpm"])) if fans else "no fan data", 11)
         asleep = gpu["state"] == "sleeping"
         L(col2, px(2), "GPU · off" if asleep else "GPU", 11)
         L(col2, px(14), "–" if asleep else fmt_temp(gpu["temp"]), 30, "Semibold Display",
@@ -853,9 +869,12 @@ class Panel:
         if len(fans) > 1:
             L(col2, px(54), "Fan " + fmt_rpm(fans[1]["rpm"]), 11)
         self.di.rectangle((pad, px(80), W - pad, px(80) + max(1, round(S)) - 1), fill=45)
-        L(pad, px(90), "Fan mode", 11)
-        self.segmented("mode", MODES, ctl["mode"], (pad, px(106), W - pad, px(136)), 10,
-                       running=ctl["active"] if ctl["mode"] == "auto" else None)
+        if s.get("caps", {}).get("fan_control"):
+            L(pad, px(90), "Fan mode", 11)
+            self.segmented("mode", MODES, ctl["mode"], (pad, px(106), W - pad, px(136)), 10,
+                           running=ctl["active"] if ctl["mode"] == "auto" else None)
+        else:
+            L(pad, px(96), "Fan control needs an ASUS laptop.", 11, "Regular", 155)
 
     def _sound_compact(self, snd, pad, top):
         """On/off, boost and the spectrum — the rest lives in the regular size."""
@@ -876,29 +895,42 @@ class Panel:
         L = self.label
         L(pad, px(8), "CPU", 13)
         L(pad, px(24), fmt_temp(cpu["temp"]), 44, "Semibold Display", 255 if cpu["temp"] else 105, temp=cpu["temp"])
-        L(pad, px(82), "Fan " + fmt_rpm(fans[0]["rpm"]), 13)
+        L(pad, px(82), ("Fan " + fmt_rpm(fans[0]["rpm"])) if fans else
+          {"hwmonitor": "via hardware monitor", "zone": "ACPI sensor"}.get(s.get("cpu_source"), "no fan data"),
+          13)
         if gpu["state"] == "sleeping":
             L(col2, px(8), "GPU · asleep", 13)
             L(col2, px(24), "–", 44, "Semibold Display", 105)
         else:
             active = gpu["state"] == "active"
-            L(col2, px(8), "GPU" if active else "GPU · idle", 13)
+            L(col2, px(8), "GPU" if active else "GPU · no sensor" if gpu["state"] == "unavailable"
+              else "GPU · idle", 13)
             L(col2, px(24), fmt_temp(gpu["temp"]), 44, "Semibold Display", 255 if active else 105,
               temp=gpu["temp"] if active else None)
         if len(fans) > 1:
             L(col2, px(82), "Fan " + fmt_rpm(fans[1]["rpm"]), 13)
+        elif not fans and gpu["state"] == "unavailable":
+            L(col2, px(82), "no reading", 13)
         self.di.rectangle((pad, px(112), W - pad, px(112) + max(1, round(S)) - 1), fill=45)
-        L(pad, px(126), "Fan mode", 13)
-        self.segmented("mode", MODES, ctl["mode"], (pad, px(150), W - pad, px(186)),
-                       running=ctl["active"] if ctl["mode"] == "auto" else None)
+        if s.get("caps", {}).get("fan_control"):
+            L(pad, px(126), "Fan mode", 13)
+            self.segmented("mode", MODES, ctl["mode"], (pad, px(150), W - pad, px(186)),
+                           running=ctl["active"] if ctl["mode"] == "auto" else None)
+        else:
+            L(pad, px(126), "Fan control", 13)
+            L(pad, px(150), "Only on ASUS laptops with the ATKACPI driver.", 12, "Regular", 165)
+            L(pad, px(168), "Everything else on this page still works.", 12, "Regular", 140)
         active = (ctl["active"] or "").title()
-        if ctl["mode"] != "auto":
+        if not s.get("caps", {}).get("fan_control"):
+            msg = ""
+        elif ctl["mode"] != "auto":
             msg = f"Fixed on {ctl['mode'].title()}. Choose Auto to follow the load."
         elif active:
             msg = f"Auto is using {active}" + (f" · {ctl['reason']}" if ctl["reason"] else "")
         else:
             msg = "Auto is choosing a mode…"
-        L(pad, px(198), msg, 12)
+        if msg:
+            L(pad, px(198), msg, 12)
         self.di.rectangle((pad, px(228), W - pad, px(228) + max(1, round(S)) - 1), fill=45)
         row = (pad - 8 * S, px(236), W - pad + 8 * S, px(264))
         self.hover_lens("details", row, (row[3] - row[1]) / 2)
@@ -968,12 +1000,13 @@ class Panel:
             ("toggle", "soundstart", "Turn boost on at launch", opts.get("soundstart", False), None),
             ("head", "Fans"),
             ("toggle", "fanrestore", "Back to Balanced on exit", opts.get("fanrestore", True), None),
+            ("note", "hardware", self.hw_note, None, None),
             ("head", "System"),
             ("toggle", "startup", "Start with Windows", startup, None),
             ("toggle", "capture", "Show in screen recordings", captureable,
              "Glass stops updating while this is on"),
         ]
-        h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40}
+        h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46}
         total = sum(h[r[0]] for r in rows) * S
         view_h = self.height(None) - top - 78 * S
         first = self.scroll.get("settings", 0)
@@ -988,6 +1021,9 @@ class Panel:
                 if kind == "head":
                     L(pad, y + 14 * S, key.upper(), 10, "Semibold Text", 130, "lm")
                     self.di.rectangle((pad, y + 24 * S, W - pad, y + 24 * S + max(1, round(S)) - 1), fill=32)
+                elif kind == "note":
+                    for i, line in enumerate((row[2] or "").split("\n")[:2]):
+                        L(pad, y + (10 + i * 16) * S, line, 11, "Regular", 150, "lm")
                 elif kind == "slider":
                     _, _, name, val, hint = row
                     L(pad, y + 10 * S, name, 13 if c else 14, "Semibold Text", 255, "lm")
@@ -1106,6 +1142,7 @@ class App:
             PROFILE.setdefault("draw_content", []).append(time.perf_counter() - t0)
 
     def _draw_content(self, crossfade=False):
+        self.panel.hw_note = self.hardware_note()
         ink, accent, controls = self.panel.draw(self.snap, self.sound, self.glassiness, self.startup,
                                                 self.pointer_style, self.media, self.seek_value,
                                                 self.captureable)
@@ -1122,6 +1159,21 @@ class App:
         h = self.springs.get("height", self.panel.height(self.snap), k=260, zeta=0.74)
         h.target = self.panel.height(self.snap)
         self.frame_dirty = True
+
+    def hardware_note(self):
+        caps = (self.snap or {}).get("caps", {})
+        if caps.get("fan_control") and caps.get("nvidia"):
+            return "ASUS fan control and NVIDIA sensors are active."
+        bits = []
+        if not caps.get("fan_control"):
+            bits.append("No ASUS fan interface: modes hidden")
+        if not caps.get("nvidia"):
+            bits.append("no NVIDIA sensors")
+        src = (self.snap or {}).get("cpu_source")
+        second = {"hwmonitor": "Temperatures come from LibreHardwareMonitor.",
+                  "zone": "Using the ACPI sensor. Run LibreHardwareMonitor for per-core temps and fans.",
+                  "none": "Run LibreHardwareMonitor for temperatures and fan speeds."}.get(src, "")
+        return ", ".join(bits) + ".\n" + second
 
     def set_compact(self, compact):
         cfg = engine.load_config()

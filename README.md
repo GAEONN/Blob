@@ -63,6 +63,23 @@ Settings also holds **Show in screen recordings**. Off (the default) keeps the p
 capture so the glass can refract live. On makes it visible to recorders, at the cost of freezing
 the glass to the backdrop captured when it appeared, since it would otherwise refract itself.
 
+## On other machines
+
+Blob runs on any Windows 11 laptop; the parts that depend on hardware degrade instead of breaking.
+
+| Part | ASUS + NVIDIA | Anything else |
+| --- | --- | --- |
+| CPU temperature | ASUS ATKACPI | LibreHardwareMonitor if it's running, otherwise the ACPI thermal zone |
+| Fan speeds | ATKACPI | LibreHardwareMonitor, otherwise hidden |
+| Fan modes | Silent / Balanced / Turbo | hidden, with a line saying why |
+| GPU | NVML (temp, load, power) | LibreHardwareMonitor for the temperature |
+| Sound, Music, glass | full | full |
+
+Running [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) in the
+background is the one thing worth adding on an Intel or AMD machine: Blob picks its sensors up
+automatically. The Settings page says what it found. The Sound page needs
+[VB-Audio Virtual Cable](https://vb-audio.com/Cable/) and says so if it's missing.
+
 ## Requirements
 
 * Windows 11, a GPU with OpenGL 3.3

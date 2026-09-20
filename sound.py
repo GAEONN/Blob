@@ -142,6 +142,7 @@ class Sound:
         self.p[:] = 0
         self.p[HEARTBEAT] = time.time()
         self.push()
+        self.cable = None          # set by the worker: is VB-Audio Virtual Cable installed?
         self.jobs = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
         self.jobs.put(("warm", None))
@@ -180,6 +181,9 @@ class Sound:
     # ── UI-facing actions (all instant; the work happens on the worker) ──
     def set_enabled(self, on):
         self.error = ""
+        if on and self.cable is False:
+            self.error = "Needs VB-Audio Virtual Cable (vb-audio.com/Cable) — install it, then reopen Blob."
+            return
         if on and fxsound_running():
             self.fx_conflict = True
             self.error = "FxSound is running and keeps taking the audio."
@@ -275,6 +279,7 @@ class Sound:
                 core.log(f"sound worker: {job}: {e!r}")
 
     def _pick_output(self):
+        self.cable = device_id(CABLE_IN) is not None
         names = [n for n, _ in output_devices(refresh=True)]
         if self.output not in names:
             current = default_output_name()

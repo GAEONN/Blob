@@ -12,6 +12,7 @@ Control:
 """
 import ctypes
 import json
+import subprocess
 import os
 import struct
 import threading
@@ -342,6 +343,8 @@ class Controller:
             self._apply(self.mode)
 
     def _apply(self, profile):
+        if not self.asus.h:
+            return
         if self.asus.set_mode(profile):
             self.active = profile
             self.last_switch = time.time()
@@ -420,6 +423,60 @@ class Controller:
 
 
 # ─────────────────────────── Sampler ───────────────────────────
+class HardwareMonitorWMI:
+    """Optional extra sensors from LibreHardwareMonitor / OpenHardwareMonitor, when the user
+    happens to run one. That covers Intel and AMD machines, where Windows exposes nothing."""
+
+    NAMESPACES = ((r"root\LibreHardwareMonitor", "LibreHardwareMonitor"),
+                  (r"root\OpenHardwareMonitor", "OpenHardwareMonitor"))
+
+    def __init__(self):
+        self.namespace = None
+        self.values = {}
+        self.checked = 0.0
+
+    def running(self):
+        names = {n.lower() for n in ("LibreHardwareMonitor.exe", "OpenHardwareMonitor.exe")}
+        return any((p.info["name"] or "").lower() in names for p in psutil.process_iter(["name"]))
+
+    def poll(self):
+        """Returns {'cpu': °C, 'gpu': °C, 'fans': [rpm, ...]} — empty if no such app is running."""
+        now = time.time()
+        if now - self.checked < 2.0:
+            return self.values
+        self.checked = now
+        if self.namespace is None and not self.running():
+            self.values = {}
+            return self.values
+        for ns, _ in ([(self.namespace, None)] if self.namespace else self.NAMESPACES):
+            try:
+                out = subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                     f"Get-CimInstance -Namespace {ns} -ClassName Sensor -ErrorAction Stop | "
+                     "Where-Object {$_.SensorType -in 'Temperature','Fan'} | "
+                     "ConvertTo-Json -Compress -Depth 2"],
+                    capture_output=True, text=True, timeout=6,
+                    creationflags=0x08000000).stdout.strip()
+                if not out:
+                    continue
+                data = json.loads(out)
+                rows = data if isinstance(data, list) else [data]
+                temps = {r["Name"]: r["Value"] for r in rows if r.get("SensorType") == "Temperature"}
+                fans = [r["Value"] for r in rows if r.get("SensorType") == "Fan" and r.get("Value")]
+                pick = lambda *keys: next((v for k, v in temps.items()
+                                           if any(x in k.lower() for x in keys)), None)
+                self.namespace = ns
+                self.values = {"cpu": pick("cpu package", "core (tctl", "cpu core", "package"),
+                               "gpu": pick("gpu core", "gpu temperature", "gpu hot"),
+                               "fans": [round(f) for f in fans]}
+                return self.values
+            except Exception:
+                continue
+        self.namespace = None
+        self.values = {}
+        return self.values
+
+
 class Monitor:
     def __init__(self):
         self.asus = Asus()
@@ -432,7 +489,13 @@ class Monitor:
             "gpu": r"\GPU Engine(*)\Utilization Percentage",
         })
         self.base_mhz = (psutil.cpu_freq().max if psutil.cpu_freq() else 0) or 2000
+        self.hwm = HardwareMonitorWMI()
         self.controller = Controller(self.asus)
+        # what this machine can actually do
+        self.caps = {"fan_control": bool(self.asus.h) and os.environ.get("BLOB_NO_ASUS") != "1",
+                     "asus": bool(self.asus.h) and os.environ.get("BLOB_NO_ASUS") != "1",
+                     "nvidia": bool(self.nvml.lib) and os.environ.get("BLOB_NO_NVML") != "1"}
+        self.cpu_source = "asus" if self.caps["asus"] else "none"
         self.lock = threading.Lock()
         self.state = {}
         self.nv_last, self.nv_data, self.nv_time = 0.0, {}, 0.0
@@ -464,13 +527,22 @@ class Monitor:
         now = time.time()
         self.pdh.collect()
         a = self.asus
-        cpu_temp = a.get(a.CPU_TEMP)
-        fans = [{"name": "CPU fan", "rpm": a.fan_rpm(a.CPU_FAN)}, {"name": "GPU fan", "rpm": a.fan_rpm(a.GPU_FAN)}]
+        asus_ok = self.caps["asus"]
+        cpu_temp = a.get(a.CPU_TEMP) if asus_ok else None
+        fans = ([{"name": "CPU fan", "rpm": a.fan_rpm(a.CPU_FAN)},
+                 {"name": "GPU fan", "rpm": a.fan_rpm(a.GPU_FAN)}] if asus_ok else [])
+        extra = self.hwm.poll()
+        if cpu_temp is None and extra.get("cpu"):
+            cpu_temp = round(extra["cpu"])
+            self.cpu_source = "hwmonitor"
+        if not fans and extra.get("fans"):
+            fans = [{"name": f"Fan {i + 1}", "rpm": rpm} for i, rpm in enumerate(extra["fans"][:3])]
+            self.caps["fans_readable"] = True
         perf = self.pdh.values("perf").get("_Total")
         dgpu_load, igpu_load = self.gpu_loads()
 
         # dGPU: only talk to NVML when it's already awake, so we never keep it from sleeping.
-        awake = self.nv_power.awake()
+        awake = self.nv_power.awake() if self.caps["nvidia"] else False
         busy = (dgpu_load or 0) > 1
         if awake and (now - self.nv_last) >= (2 if busy else 10):
             self.nv_last = now
@@ -485,6 +557,10 @@ class Monitor:
             gstate = "idle"
         else:
             gstate = "unavailable" if awake is None else "idle"
+        if not self.caps["nvidia"]:
+            temp = (self.hwm.poll() or {}).get("gpu")
+            gstate = "active" if temp else "unavailable"
+            self.nv_data = {"temp": round(temp)} if temp else {}
         gpu = {"state": gstate, "temp": self.nv_data.get("temp") if gstate in ("active", "idle") else None,
                "load": dgpu_load if dgpu_load is not None else self.nv_data.get("load"),
                "power": self.nv_data.get("power") if gstate == "active" else None,
@@ -505,6 +581,12 @@ class Monitor:
             if kelvin > 200:
                 sensors.append({"name": "Motherboard" if "TZ01" in name.upper() else "Thermal zone " + name[-4:],
                                 "value": round(kelvin - 273.15), "unit": "°C", "temp": True})
+        if cpu_temp is None:
+            zones = [v for v in self.pdh.values("zones").values() if v > 200]
+            if zones:
+                cpu_temp = round(max(zones) - 273.15)
+                s_cpu = "thermal zone"
+                self.cpu_source = "zone"
         batt = psutil.sensors_battery()
         mem = psutil.virtual_memory()
         if igpu_load is not None:
@@ -515,6 +597,8 @@ class Monitor:
         s = {
             "t": now,
             "device": self.device,
+            "caps": self.caps,
+            "cpu_source": self.cpu_source,
             "cpu": {"temp": cpu_temp, "load": psutil.cpu_percent(),
                     "clock": round(self.base_mhz * perf / 100) if perf else None},
             "gpu": gpu,
