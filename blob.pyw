@@ -12,7 +12,7 @@ from ctypes import wintypes
 
 import numpy as np
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import engine
 import glass
@@ -326,6 +326,8 @@ class Panel:
         self.S = S * self.SS      # every layout number below is in supersampled pixels
         self.f = Fonts(self.S)    # fonts scale with the supersampled layout too
         self.compact = False
+        self.backdrop = False      # album cover behind the music page
+        self.tabs_open = False     # the switcher expands when you reach for it
         self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
@@ -345,14 +347,14 @@ class Panel:
         if page == "music":
             v = self.music_view
             if v == "art":
-                return round((self.TOP + 44 + (self.w / self.S - 2 * self.pad_u)) * self.S)
+                return round((self.TOP + 96 + (self.w / self.S - 2 * self.pad_u)) * self.S)
             if v in ("search", "queue"):
                 return round((self.TOP + (330 if c else 470)) * self.S)
             return round((self.TOP + (132 if c else 540)) * self.S)
         if page == "sound":
             return round((self.TOP + (150 if c else 462)) * self.S)
         if page == "settings":
-            return round((self.TOP + (236 if c else 312)) * self.S)
+            return round((self.TOP + (280 if c else 356)) * self.S)
         base = 152 if c else 292
         if self.details_open and s and not c:
             base = 286 + len(self.detail_rows(s)) * 24 + 16
@@ -483,14 +485,28 @@ class Panel:
 
     # ── pages ──
     def draw(self, s, snd, glassiness, startup, pointer="arrow", media=None, seek=None, captureable=False):
+        # the album backdrop goes down first, under everything else on the music page
         S, W = self.S, self.w
         H = self.height(s)
         self._begin(H)
         pad = self.pad_u * S
-        # tab bar lives at the bottom: the panel is bottom-anchored, so it never moves or resizes
-        self.segmented("page", PAGES, self.page, (pad, H - 50 * S, W - pad, H - 16 * S),
-                       11 if self.compact else 13)
+        # the switcher sits at the bottom of a bottom-anchored pane, so it never moves between pages
+        y0, y1 = H - 50 * S, H - 16 * S
+        if self.tabs_open:
+            self.segmented("page", PAGES, self.page, (pad, y0, W - pad, y1), 11 if self.compact else 13)
+        else:
+            label = dict((k, n) for k, n in PAGES)[self.page]
+            half = (34 + 4.5 * len(label)) * S
+            box = (W / 2 - half, y0 + 4 * S, W / 2 + half, y1 - 4 * S)
+            self.rects["tabs"] = (pad, y0 - 6 * S, W - pad, y1 + 6 * S)
+            self.controls.append(("hover", "tabs", box, (box[3] - box[1]) / 2))
+            self.label(W / 2 - 7 * S, (box[1] + box[3]) / 2, label, 11 if self.compact else 12,
+                       "Semibold Text", 210, "mm")
+            self.di.text((box[2] - 13 * S, (box[1] + box[3]) / 2), "\uE70E", font=self.f.icon(8), fill=150,
+                         anchor="mm")
         top = self.CONTENT * S
+        if self.page == "music" and self.backdrop and media is not None and media.art is not None:
+            self._backdrop(media.art, H)
         if self.page == "sound":
             (self._sound_compact if self.compact else self._sound)(snd, pad, top)
         elif self.page == "settings":
@@ -566,6 +582,17 @@ class Panel:
 
     ROW_SEARCH, ROW_LIST = 50, 38
 
+    def _backdrop(self, art, H):
+        """The cover, blurred and dimmed, filling the page behind the content."""
+        W = self.w
+        side = min(art.size)
+        img = art.crop(((art.width - side) // 2, (art.height - side) // 2,
+                        (art.width + side) // 2, (art.height + side) // 2))
+        img = img.resize((max(W, H) // 6, max(W, H) // 6), Image.LANCZOS)
+        img = img.filter(ImageFilter.GaussianBlur(6)).resize((W, H), Image.LANCZOS).convert("RGBA")
+        img.putalpha(Image.fromarray((glass.shape_mask(W, H, self.radius) * 150).astype(np.uint8)))
+        self.pic.alpha_composite(img, (0, 0))
+
     def _music(self, m, snd, seek, pad, top):
         view = self.music_view
         if view == "search":
@@ -640,11 +667,21 @@ class Panel:
         self.glass_button("mview:queue", W - pad - 52 * S, px(20), 13 * S, "\uE8FD", 10, always=True)
 
     def _music_art(self, m, pad, top):
-        """Just the artwork, Apple Music style. Click it again to go back."""
+        """Just the artwork, Apple Music style, with the transport underneath."""
         S, W = self.S, self.w
         a = round(W - 2 * pad)
         self._artwork(m, round(pad), round(top), a, self.inner_radius(pad), 60)
-        self._progress(m, None, pad, W - pad, top + a + 22 * S, times=False)
+        self._progress(m, None, pad, W - pad, top + a + 20 * S, times=False)
+        cy = top + a + 58 * S
+        playing = bool(m and m.playing)
+        am, rep = self.am, getattr(self.am, "repeat", "off")
+        self.transport("am:shuffle", W / 2 - 104 * S, cy, 14 * S, "shuffle",
+                       active=bool(getattr(am, "shuffle", False)))
+        self.transport("media:previous", W / 2 - 58 * S, cy, 19 * S, "previous")
+        self.transport("media:toggle", W / 2, cy, 26 * S, "pause" if playing else "play", always=True)
+        self.transport("media:next", W / 2 + 58 * S, cy, 19 * S, "next")
+        self.transport("am:repeat", W / 2 + 104 * S, cy, 14 * S,
+                       "repeat_one" if rep == "one" else "repeat", active=rep != "off")
 
     def _artwork(self, m, ax, ay, a, radius, glyph_size):
         """Album art as a squircle with a glass rim; clicking it opens the artwork view."""
@@ -921,6 +958,9 @@ class Panel:
             self.segmented("pointer", POINTERS, pointer, (pad, px(y + 22), W - pad, px(y + 54)), 12)
             y += 80
 
+        L(pad, px(y + 14), "Album backdrop", 12 if c else 14, "Regular", 255, "lm")
+        self.toggle("backdrop", self.backdrop, W - pad - 48 * S, px(y))
+        y += 44
         L(pad, px(y + 14), "Show in screen recordings", 12 if c else 14, "Regular", 255, "lm")
         self.toggle("capture", captureable, W - pad - 48 * S, px(y))
         L(pad, px(y + 30), "Glass stops updating while this is on.", 11, "Regular", 140)
@@ -959,6 +999,7 @@ class App:
         self.glassiness = float(cfg.get("glass", 0.35))
         self.captureable = bool(cfg.get("captureable", False))
         self.panel.set_compact(os.environ.get("BLOB_COMPACT", "1" if cfg.get("compact") else "0") == "1")
+        self.panel.backdrop = bool(cfg.get("backdrop", False))
         self.startup = startup_enabled()
         self.springs = Springs()
         self.controls, self.old_controls = [], []
@@ -1434,6 +1475,8 @@ class App:
             crossfade = True
         elif kind == "searchbox":
             pass
+        elif kind == "tabs":
+            self.panel.tabs_open = True
         elif kind == "am":
             (self.am.toggle_shuffle if key == "shuffle" else self.am.cycle_repeat)()
             self.hold_until = time.time() + 6
@@ -1453,6 +1496,11 @@ class App:
                 self.startup = startup_enabled()
             elif key == "capture":
                 self.set_captureable(not self.captureable)
+            elif key == "backdrop":
+                self.panel.backdrop = not self.panel.backdrop
+                cfg = engine.load_config()
+                cfg["backdrop"] = self.panel.backdrop
+                engine.save_config(cfg)
         elif kind == "device":
             self.sound.next_output()
         elif kind == "fxquit":
@@ -1555,6 +1603,10 @@ class App:
                         user32.TrackMouseEvent(ctypes.byref(tme))
                     self.mouse_xy = (x, y)
                     self.hover = self.panel.hit(x, y)
+                    want = bool(self.hover and (self.hover == "tabs" or self.hover.startswith("page:")))
+                    if want != self.panel.tabs_open:
+                        self.panel.tabs_open = want
+                        self.draw_content()
                     if time.perf_counter() - self.last_frame >= 0.006:
                         self.frame_dirty = True
                         self.frame()
@@ -1562,6 +1614,10 @@ class App:
             if msg == 0x2A3 and not os.environ.get("BLOB_NOLEAVE"):  # WM_MOUSELEAVE (debug: ignore)
                 self.mouse_in = False
                 self.hover = None
+                if self.panel.tabs_open:
+                    self.panel.tabs_open = False
+                    self.draw_content()
+                self.frame_dirty = True
                 return 0
             if msg == WM_LBUTTONDOWN:
                 x, y = self.panel_local(lp)
