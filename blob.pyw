@@ -500,8 +500,8 @@ class Panel:
             text = text[:-1]
         return text.rstrip() + "…"
 
-    def transport(self, key, cx, cy, r, kind, always=False):
-        """Round glass button with a solid play / pause / skip mark."""
+    def transport(self, key, cx, cy, r, kind, always=False, active=False):
+        """Round glass button with a solid mark: shuffle, rewind, play/pause, forward, repeat."""
         S = self.S
         rect = (cx - r, cy - r, cx + r, cy + r)
         if always:
@@ -509,23 +509,39 @@ class Panel:
                         raised=1.0)
         self.rects[key] = rect
         self.controls.append(("hover", key, rect, r))
-        d, u = self.di, r * 0.52
+        d, u, ink = self.di, r * 0.52, 255 if active or kind in ("play", "pause") else 225
         if kind == "pause":
             bw, bh = u * 0.34, u * 0.95
             for sx in (-1, 1):
                 x = cx + sx * u * 0.42
-                d.rounded_rectangle((x - bw / 2, cy - bh, x + bw / 2, cy + bh), radius=bw / 2, fill=255)
+                d.rounded_rectangle((x - bw / 2, cy - bh, x + bw / 2, cy + bh), radius=bw / 2, fill=ink)
         elif kind == "play":
-            d.polygon([(cx - u * 0.55, cy - u), (cx - u * 0.55, cy + u), (cx + u * 0.95, cy)], fill=255)
-        else:  # previous / next
-            sgn = -1 if kind == "previous" else 1
-            tip, back = cx + sgn * u * 0.95, cx - sgn * u * 0.35
-            d.polygon([(back, cy - u * 0.85), (back, cy + u * 0.85), (tip, cy)], fill=235)
-            d.polygon([(back - sgn * u * 0.15, cy - u * 0.85), (back - sgn * u * 0.15, cy + u * 0.85),
-                       (cx - sgn * u * 1.25, cy)], fill=235)
-            bar = cx + sgn * u * 1.05
-            d.rounded_rectangle((bar - u * 0.11, cy - u * 0.85, bar + u * 0.11, cy + u * 0.85),
-                                radius=u * 0.11, fill=235)
+            d.polygon([(cx - u * 0.55, cy - u), (cx - u * 0.55, cy + u), (cx + u * 0.95, cy)], fill=ink)
+        elif kind in ("previous", "next"):
+            sgn = -1 if kind == "previous" else 1          # two solid triangles, like Apple Music
+            for i in (0, 1):
+                tip = cx + sgn * (u * 1.05 - i * u * 1.0)
+                back = tip - sgn * u * 0.95
+                d.polygon([(back, cy - u * 0.9), (back, cy + u * 0.9), (tip, cy)], fill=ink)
+        elif kind == "shuffle":
+            w_, h_ = u * 1.15, u * 0.72
+            lw = max(2, round(u * 0.26))
+            for sy in (-1, 1):
+                d.line([(cx - w_, cy + sy * h_), (cx - w_ * 0.35, cy + sy * h_),
+                        (cx + w_ * 0.35, cy - sy * h_), (cx + w_ * 0.72, cy - sy * h_)],
+                       fill=ink, width=lw, joint="curve")
+                ax = cx + w_ * 0.72
+                ay = cy - sy * h_
+                d.polygon([(ax, ay - u * 0.42), (ax, ay + u * 0.42), (ax + u * 0.55, ay)], fill=ink)
+        elif kind in ("repeat", "repeat_one"):
+            w_, h_ = u * 1.0, u * 0.72
+            lw = max(2, round(u * 0.26))
+            d.rounded_rectangle((cx - w_, cy - h_, cx + w_, cy + h_), radius=h_ * 0.9, outline=ink, width=lw)
+            d.rectangle((cx + w_ * 0.1, cy - h_ - lw, cx + w_ * 0.75, cy - h_ + lw), fill=0)
+            d.polygon([(cx + w_ * 0.55, cy - h_ - u * 0.45), (cx + w_ * 0.55, cy - h_ + u * 0.45),
+                       (cx + w_ * 1.05, cy - h_)], fill=ink)
+            if kind == "repeat_one":
+                d.text((cx, cy), "1", font=self.f.get(9, "Semibold Text"), fill=ink, anchor="mm")
 
     def glass_button(self, key, cx, cy, r, glyph, size, always=False):
         """Round glass button: fuses with the pointer; `always` keeps a frosted body when idle."""
@@ -572,9 +588,15 @@ class Panel:
         self._progress(m, seek, pad + 12 * S, W - pad - 12 * S, py_, times=True)
         cy = py_ + 62 * S
         playing = bool(m and m.playing)
-        self.transport("media:previous", W / 2 - 84 * S, cy, 24 * S, "previous")
+        am = self.am
+        rep = getattr(am, "repeat", "off")
+        self.transport("am:shuffle", W / 2 - 128 * S, cy, 17 * S, "shuffle",
+                       active=bool(getattr(am, "shuffle", False)))
+        self.transport("media:previous", W / 2 - 74 * S, cy, 24 * S, "previous")
         self.transport("media:toggle", W / 2, cy, 32 * S, "pause" if playing else "play", always=True)
-        self.transport("media:next", W / 2 + 84 * S, cy, 24 * S, "next")
+        self.transport("media:next", W / 2 + 74 * S, cy, 24 * S, "next")
+        self.transport("am:repeat", W / 2 + 128 * S, cy, 17 * S,
+                       "repeat_one" if rep == "one" else "repeat", active=rep != "off")
         self._volume_row(snd, pad, cy + 58 * S)
 
     def _music_mini(self, m, seek, pad, top):
@@ -595,9 +617,15 @@ class Panel:
         self._progress(m, seek, pad, W - pad, px(66), times=False)
         cy = px(98)
         playing = bool(m and m.playing)
-        self.transport("media:previous", pad + 26 * S, cy, 16 * S, "previous")
-        self.transport("media:toggle", W / 2, cy, 22 * S, "pause" if playing else "play", always=True)
-        self.transport("media:next", W - pad - 26 * S, cy, 16 * S, "next")
+        am = self.am
+        rep = getattr(am, "repeat", "off")
+        self.transport("am:shuffle", pad + 12 * S, cy, 12 * S, "shuffle",
+                       active=bool(getattr(am, "shuffle", False)))
+        self.transport("media:previous", pad + 52 * S, cy, 15 * S, "previous")
+        self.transport("media:toggle", W / 2, cy, 21 * S, "pause" if playing else "play", always=True)
+        self.transport("media:next", W - pad - 52 * S, cy, 15 * S, "next")
+        self.transport("am:repeat", W - pad - 12 * S, cy, 12 * S,
+                       "repeat_one" if rep == "one" else "repeat", active=rep != "off")
         self.glass_button("mview:search", W - pad - 22 * S, px(20), 13 * S, "\uE721", 10, always=True)
         self.glass_button("mview:queue", W - pad - 52 * S, px(20), 13 * S, "\uE8FD", 10, always=True)
 
@@ -1393,6 +1421,9 @@ class App:
             crossfade = True
         elif kind == "searchbox":
             pass
+        elif kind == "am":
+            (self.am.toggle_shuffle if key == "shuffle" else self.am.cycle_repeat)()
+            self.hold_until = time.time() + 6
         elif kind == "media":
             {"toggle": self.media.toggle, "next": self.media.next, "previous": self.media.previous,
              "open": self.media.open_apple_music}[key]()

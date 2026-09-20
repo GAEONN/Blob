@@ -51,6 +51,8 @@ class AppleMusic:
         self.results = []          # [{title, artist, album, url, art, kind}]
         self.playlists = []        # [name]
         self.queue = []            # [{title, artist, art}] — Apple Music's Playing Next
+        self.shuffle = False
+        self.repeat = "off"        # off | all | one
         self._art_cache = {}       # (title, artist) -> PIL image
         self.status = ""           # short message for the UI ("Searching…")
         self.version = 0           # bumps whenever results / playlists / status change
@@ -92,6 +94,16 @@ class AppleMusic:
     def refresh_queue(self):
         self.jobs.put(("queue", None))
 
+    def toggle_shuffle(self):
+        self.shuffle = not self.shuffle          # optimistic; the app confirms
+        self.version += 1
+        self.jobs.put(("shuffle", None))
+
+    def cycle_repeat(self):
+        self.repeat = {"off": "all", "all": "one", "one": "off"}[self.repeat]
+        self.version += 1
+        self.jobs.put(("repeat", None))
+
     def play_queue(self, i):
         if 0 <= i < len(self.queue):
             self._set_status(f"Playing \u201c{self.queue[i]['title']}\u201d\u2026")
@@ -126,6 +138,8 @@ class AppleMusic:
                         self._read_playlists()
                     elif job == "queue":
                         self._read_queue()
+                    elif job in ("shuffle", "repeat"):
+                        self._transport_toggle(job)
                     elif job == "play_queue":
                         self._play_queue(arg)
                         self._set_status("")
@@ -339,6 +353,7 @@ class AppleMusic:
                     walk(ch, d + 1)
             walk(w)
             self.queue = items[:40]
+            self._read_modes(w)
             self._queue_panel(w, False)
         self.version += 1
         self._queue_art()
@@ -372,6 +387,33 @@ class AppleMusic:
         with ThreadPoolExecutor(6) as ex:
             for q, img in zip(todo, ex.map(art, todo)):
                 q["art"] = img
+        self.version += 1
+
+    def _transport_toggle(self, which):
+        w = self._window()
+        with self._ghost(w):
+            aid = "ShuffleButton" if which == "shuffle" else "RepeatButton"
+            btn = w.ButtonControl(searchDepth=8, AutomationId=aid)
+            if not btn.Exists(1):
+                return
+            tog = btn.GetTogglePattern()
+            if tog:
+                tog.Toggle()
+            else:
+                btn.GetLegacyIAccessiblePattern().DoDefaultAction()
+            time.sleep(0.3)
+            self._read_modes(w)
+
+    def _read_modes(self, w):
+        """Shuffle is a toggle; repeat announces its state in the button's name."""
+        sh = w.ButtonControl(searchDepth=8, AutomationId="ShuffleButton")
+        if sh.Exists(0.5):
+            tog = sh.GetTogglePattern()
+            self.shuffle = bool(tog and tog.ToggleState == 1)
+        rp = w.ButtonControl(searchDepth=8, AutomationId="RepeatButton")
+        if rp.Exists(0.5):
+            name = (rp.Name or "").lower()
+            self.repeat = "one" if "one" in name else "off" if "not repeat" in name else "all"
         self.version += 1
 
     def _play_queue(self, index):
