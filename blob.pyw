@@ -329,6 +329,7 @@ class Panel:
         self.backdrop = False      # album cover behind the music page
         self.tabs_open = False     # the switcher expands when you reach for it
         self.tabs_t = 0.0          # animated 0..1 between resting pill and full set
+        self.options = {}          # the small on/off settings, straight from the config file
         self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
@@ -355,7 +356,7 @@ class Panel:
         if page == "sound":
             return round((self.TOP + (150 if c else 462)) * self.S)
         if page == "settings":
-            return round((self.TOP + (280 if c else 356)) * self.S)
+            return round((self.TOP + (300 if c else 420)) * self.S)
         base = 152 if c else 292
         if self.details_open and s and not c:
             base = 286 + len(self.detail_rows(s)) * 24 + 16
@@ -709,7 +710,8 @@ class Panel:
         if art is None:   # only the placeholder needs a glass edge; real covers stand on their own
             self.static((ax, ay, ax + a, ay + a), radius, strength=4 * self.S, bevel=8 * self.S, rim=1.0,
                         n=5.0)
-        self.rects["mview:" + ("now" if self.music_view == "art" else "art")] = (ax, ay, ax + a, ay + a)
+        if self.options.get("artclick", True) or self.music_view == "art":
+            self.rects["mview:" + ("now" if self.music_view == "art" else "art")] = (ax, ay, ax + a, ay + a)
 
     def _progress(self, m, seek, x0, x1, y, times=True):
         S = self.S
@@ -812,7 +814,7 @@ class Panel:
             self.rects[f"queue:{i}"] = row
             self.controls.append(("hover", f"queue:{i}", row, 12 * S))
             th = round((26 if self.compact else 32) * S)
-            if q.get("art") is not None:
+            if q.get("art") is not None and self.options.get("queueart", True):
                 img = q["art"].resize((th, th), Image.LANCZOS).convert("RGBA")
                 img.putalpha(Image.fromarray((glass.shape_mask(th, th, self.inner_radius(pad, th / 2)) * 255).astype(np.uint8)))
                 self.pic.alpha_composite(img, (round(pad), round(y + 3 * S)))
@@ -947,35 +949,65 @@ class Panel:
         L(pad, px(430), msg, 12, anchor="lm")
 
     def _settings(self, glassiness, startup, pointer, pad, top, captureable=False):
+        """Grouped, scrollable settings: each section covers one part of Blob."""
         S, W = self.S, self.w
         c = self.compact
-        px = lambda v: top + (v + 4) * S
         L = self.label
-        L(pad, px(2), "Glass", 13 if c else 14, "Semibold Text", 255)
-        L(W - pad, px(2), "Clear" if glassiness < 0.08 else "Frosted" if glassiness > 0.85
-          else f"{round(glassiness * 100)}% frosted", 12, "Regular", 175, "ra")
-        self.slider("glass", glassiness, pad + 12 * S, W - pad - 12 * S, px(32))
-        L(pad, px(50), "Clear", 11, "Regular", 120)
-        L(W - pad, px(50), "Frosted", 11, "Regular", 120, "ra")
-
-        L(pad, px(84), "Size", 13 if c else 14, "Semibold Text", 255, "lm")
-        self.segmented("size", SIZES, "compact" if c else "regular",
-                       (W / 2 - 4 * S if c else W / 2 + 6 * S, px(70), W - pad, px(98)), 11)
-        y = 112
-        if not c:
-            L(pad, px(y), "Pointer", 14, "Semibold Text", 255)
-            self.segmented("pointer", POINTERS, pointer, (pad, px(y + 22), W - pad, px(y + 54)), 12)
-            y += 80
-
-        L(pad, px(y + 14), "Album backdrop", 12 if c else 14, "Regular", 255, "lm")
-        self.toggle("backdrop", self.backdrop, W - pad - 48 * S, px(y))
-        y += 44
-        L(pad, px(y + 14), "Show in screen recordings", 12 if c else 14, "Regular", 255, "lm")
-        self.toggle("capture", captureable, W - pad - 48 * S, px(y))
-        L(pad, px(y + 30), "Glass stops updating while this is on.", 11, "Regular", 140)
-
-        L(pad, px(y + 62), "Start with Windows", 12 if c else 14, "Regular", 255, "lm")
-        self.toggle("startup", startup, W - pad - 48 * S, px(y + 48))
+        opts = self.options
+        rows = [
+            ("head", "Appearance"),
+            ("slider", "glass", "Glass", glassiness, "Clear" if glassiness < 0.08 else "Frosted"
+             if glassiness > 0.85 else f"{round(glassiness * 100)}% frosted"),
+            ("seg", "size", "Size", SIZES, "compact" if c else "regular"),
+            ("seg", "pointer", "Pointer", POINTERS, pointer),
+            ("head", "Music"),
+            ("toggle", "backdrop", "Album backdrop", self.backdrop, "The cover, blurred, behind the page"),
+            ("toggle", "queueart", "Covers in Playing Next", opts.get("queueart", True), None),
+            ("toggle", "artclick", "Tap artwork to enlarge", opts.get("artclick", True), None),
+            ("head", "Sound"),
+            ("toggle", "soundstart", "Turn boost on at launch", opts.get("soundstart", False), None),
+            ("head", "Fans"),
+            ("toggle", "fanrestore", "Back to Balanced on exit", opts.get("fanrestore", True), None),
+            ("head", "System"),
+            ("toggle", "startup", "Start with Windows", startup, None),
+            ("toggle", "capture", "Show in screen recordings", captureable,
+             "Glass stops updating while this is on"),
+        ]
+        h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40}
+        total = sum(h[r[0]] for r in rows) * S
+        view_h = self.height(None) - top - 78 * S
+        first = self.scroll.get("settings", 0)
+        max_off = max(0.0, total - view_h)
+        off = max(0.0, min(first * 40 * S, max_off))
+        self.scroll["settings"] = off / (40 * S)
+        y = top - off
+        for row in rows:
+            kind, key = row[0], row[1]
+            rh = h[kind] * S
+            if y >= top - 2 * S and y + rh <= top + view_h:   # only fully visible rows
+                if kind == "head":
+                    L(pad, y + 14 * S, key.upper(), 10, "Semibold Text", 130, "lm")
+                    self.di.rectangle((pad, y + 24 * S, W - pad, y + 24 * S + max(1, round(S)) - 1), fill=32)
+                elif kind == "slider":
+                    _, _, name, val, hint = row
+                    L(pad, y + 10 * S, name, 13 if c else 14, "Semibold Text", 255, "lm")
+                    L(W - pad, y + 10 * S, hint, 12, "Regular", 165, "rm")
+                    self.slider(key, val, pad + 12 * S, W - pad - 12 * S, y + 38 * S)
+                elif kind == "seg":
+                    _, _, name, options, cur = row
+                    L(pad, y + 14 * S, name, 13 if c else 14, "Semibold Text", 255, "lm")
+                    self.segmented(key, options, cur, (pad, y + 26 * S, W - pad, y + 54 * S), 11)
+                else:
+                    _, _, name, val, hint = row
+                    L(pad, y + (13 if hint else 18) * S, name, 13 if c else 14, "Regular", 255, "lm")
+                    if hint:
+                        L(pad, y + 27 * S, hint, 10, "Regular", 135, "lm")
+                    self.toggle(key, val, W - pad - 48 * S, y + 4 * S)
+            y += rh
+        if total > view_h:      # scroll hint
+            bar_h = view_h * view_h / total
+            by = top + (view_h - bar_h) * (off / max_off if max_off else 0)
+            self.ink_shape((W - 9 * S, by, W - 6 * S, by + bar_h), 1.5 * S, 80)
 
 
 class App:
@@ -1009,6 +1041,7 @@ class App:
         self.captureable = bool(cfg.get("captureable", False))
         self.panel.set_compact(os.environ.get("BLOB_COMPACT", "1" if cfg.get("compact") else "0") == "1")
         self.panel.backdrop = bool(cfg.get("backdrop", False))
+        self.panel.options = dict(cfg.get("options", {}))
         self.startup = startup_enabled()
         self.springs = Springs()
         self.controls, self.old_controls = [], []
@@ -1516,6 +1549,15 @@ class App:
                 cfg = engine.load_config()
                 cfg["backdrop"] = self.panel.backdrop
                 engine.save_config(cfg)
+            elif key in ("queueart", "artclick", "soundstart", "fanrestore"):
+                opts = dict(self.panel.options)
+                opts[key] = not opts.get(key, key != "soundstart")
+                self.panel.options = opts
+                cfg = engine.load_config()
+                cfg["options"] = opts
+                engine.save_config(cfg)
+                if key == "soundstart":
+                    self.sound.enabled_at_launch = opts[key]
         elif kind == "device":
             self.sound.next_output()
         elif kind == "fxquit":
@@ -1586,9 +1628,10 @@ class App:
                 return 0
             if msg == 0x20A:  # WM_MOUSEWHEEL
                 view = self.panel.music_view
-                if self.panel.page == "music" and view in ("search", "playlists"):
+                key = "settings" if self.panel.page == "settings" else                     (view if self.panel.page == "music" and view in ("search", "queue") else None)
+                if key:
                     step = -1 if ctypes.c_short(wp >> 16).value > 0 else 1
-                    self.panel.scroll[view] = max(0, self.panel.scroll.get(view, 0) + step)
+                    self.panel.scroll[key] = max(0, self.panel.scroll.get(key, 0) + step)
                     self.draw_content()
                     self.frame_dirty = True
                 return 0

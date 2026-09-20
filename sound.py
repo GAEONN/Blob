@@ -145,7 +145,8 @@ class Sound:
         self.jobs = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
         self.jobs.put(("warm", None))
-        if self.cfg.get("enabled"):
+        opts = core.load_config().get("options", {})
+        if self.cfg.get("enabled") and opts.get("soundstart", False):
             self.set_enabled(True)
 
     # ── settings ──
