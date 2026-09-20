@@ -650,7 +650,9 @@ class Panel:
             self.static((ax, ay, ax + a, ay + a), radius, strength=8 * self.S, bevel=16 * self.S, rim=0.8,
                         frost=1.0, lift=0.12, n=5.0)
             self.di.text((ax + a / 2, ay + a / 2), "\uEC4F", font=self.f.icon(glyph_size), fill=140, anchor="mm")
-        self.static((ax, ay, ax + a, ay + a), radius, strength=4 * self.S, bevel=8 * self.S, rim=1.0, n=5.0)
+        if art is None:   # only the placeholder needs a glass edge; real covers stand on their own
+            self.static((ax, ay, ax + a, ay + a), radius, strength=4 * self.S, bevel=8 * self.S, rim=1.0,
+                        n=5.0)
         self.rects["mview:" + ("now" if self.music_view == "art" else "art")] = (ax, ay, ax + a, ay + a)
 
     def _progress(self, m, seek, x0, x1, y, times=True):
