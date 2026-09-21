@@ -219,6 +219,21 @@ appears to become the final bubble. Bubble placement is locked by default. The s
 overlay shortcut controls Gaming and bubble edit mode; Settings records any modified key chord and
 persists it through `RegisterHotKey`.
 
+### Music player bubble
+
+Music repeats the contextual bubble language without inheriting Hardware's mode behavior. The
+mini-player reserves a clear top-right footprint for one unmarked circular affordance and shortens
+the seek line so neither metadata nor interaction targets collide with it. Activating it springs the
+card toward that top-right point while the signed-distance outline becomes the same fused two-lobe
+silhouette. Live spectrum energy adds a restrained radius and fusion pulse; a slow low-amplitude
+breath keeps the surface alive while playback is active but the spectrum is quiet.
+
+The large lobe is a compact transport surface: one tap toggles playback after the double-click
+window, a second tap advances, and a 520 ms hold goes to the previous track. The attached lobe wins
+hit testing in the fused neck and restores the full card. A short gesture explanation belongs in
+Music settings so the bubble itself remains unlabelled. The existing overlay shortcut temporarily
+switches either bubble from interaction to unlocked drag mode; relocking restores Music gestures.
+
 ### Gaming strip and Playing Next extension
 
 This addition describes the native extension in `blob.pyw`, `gaming.py` and

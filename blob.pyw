@@ -3,6 +3,7 @@ panel with hardware, sound, music, gaming and settings views. Hardware monitorin
 Sound provides system-wide boost / EQ like FxSound, with a glass spectrum. Drag the panel to pin it
 anywhere (e.g. over a game or video); click the tray number again to hide it."""
 import ctypes
+import math
 import os
 import subprocess
 import sys
@@ -415,7 +416,8 @@ class Panel:
         self.update_width()
 
     def update_width(self):
-        if self.page == "blob" and self.hardware_view == "bubble":
+        if ((self.page == "blob" and self.hardware_view == "bubble") or
+                (self.page == "music" and self.music_view == "bubble")):
             width = self.BUBBLE_W
         elif self.page in ("music", "blob"):
             width = self.WIDE       # Music owns its compact/expanded states contextually
@@ -432,6 +434,8 @@ class Panel:
             return round((86 + (56 if self.tabs_open or self.tabs_t > .04 else 0)) * self.S)
         if page == "music":
             v = self.music_view
+            if v == "bubble":
+                return round(self.BUBBLE_H * self.S)
             if v == "art":
                 return round((18 + (self.w / self.S - 44) + 18) * self.S)
             if v in ("search", "queue"):
@@ -598,7 +602,7 @@ class Panel:
         if self.page == "gaming":
             self._gaming(s)
             return self.ink, self.accent, self.controls
-        focus_art = self.page == "music" and self.music_view == "art"
+        focus_art = self.page == "music" and self.music_view in ("art", "bubble")
         if not focus_art:
             # The switcher sits at the bottom of a bottom-anchored pane, so it
             # never moves between ordinary views. Expanded artwork owns the
@@ -792,6 +796,8 @@ class Panel:
 
     def _music(self, m, snd, seek, pad, top):
         view = self.music_view
+        if view == "bubble":
+            return self._music_bubble(m)
         if view == "search":
             return self._music_search(pad, top)
         if view == "queue":
@@ -805,17 +811,29 @@ class Panel:
         S, W = self.S, self.w
         px = lambda v: top + v * S
         L = self.label
-        a = round(50 * S)
+        # The empty lens is the origin of Music's bubble state. Reserve its
+        # complete footprint so title, artist and progress never run underneath.
+        bubble_r = 13 * S
+        bubble_cx, bubble_cy = W - pad - bubble_r, px(13)
+        bubble_box = (bubble_cx - bubble_r, bubble_cy - bubble_r,
+                      bubble_cx + bubble_r, bubble_cy + bubble_r)
+        self.static(bubble_box, bubble_r, strength=5 * S, bevel=7 * S, zoom=.94,
+                    rim=.8, frost=.82, lift=.11, raised=.7, n=2.0)
+        self.controls.append(("hover", "mview:bubble", bubble_box, bubble_r))
+        self.rects["mview:bubble"] = bubble_box
+
+        a = round(52 * S)
         self._artwork(m, round(pad), round(top), a, self.inner_radius(pad, a / 2), 18)
-        tx = pad + a + 12 * S
-        tw = W - pad - tx - 68 * S
+        tx = pad + a + 14 * S
+        right = bubble_box[0] - 14 * S
+        tw = max(1, right - tx)
         if m and m.active:
             L(tx, px(4), self.fit(m.title or "", 13, "Semibold Text", tw), 13, "Semibold Text", 255)
             L(tx, px(22), self.fit(m.artist or m.source, 11, "Regular", tw), 11, "Regular", 180)
         else:
             L(tx, px(4), self.fit("Not playing", 13, "Semibold Text", tw), 13, "Semibold Text", 255)
             L(tx, px(22), self.fit("Search Apple Music to start", 11, "Regular", tw), 11, "Regular", 170)
-        self._progress(m, seek, tx, W - pad, px(42), times=False)
+        self._progress(m, seek, tx, right, px(44), times=False)
         cy = px(78)
         playing = bool(m and m.playing)
         self.glass_button("mview:search", pad + 14 * S, cy, 13 * S, "\uE721", 10)
@@ -823,6 +841,26 @@ class Panel:
         self.transport("media:toggle", W / 2, cy, 20 * S, "pause" if playing else "play", always=True)
         self.transport("media:next", W / 2 + 48 * S, cy, 15 * S, "next")
         self.glass_button("mview:queue", W - pad - 14 * S, cy, 13 * S, "\uE8FD", 10)
+
+    def _music_bubble(self, m):
+        """Gesture player: tap toggles, double-tap skips, hold goes to the previous track."""
+        S = self.S
+        main = (4 * S, 16 * S, 82 * S, 94 * S)
+        restore = (58 * S, 1 * S, 101 * S, 44 * S)
+        self.rects["mbubble:gesture"] = main
+        self.controls.append(("hover", "mbubble:gesture", main, 39 * S))
+        self.rects["mview:now"] = restore
+        self.controls.append(("hover", "mview:now", restore, 21.5 * S))
+        cx, cy, u = 43 * S, 55 * S, 10 * S
+        if m and m.playing:
+            bw, bh = 3.2 * S, 10 * S
+            for sx in (-1, 1):
+                x = cx + sx * 5 * S
+                self.di.rounded_rectangle((x - bw / 2, cy - bh, x + bw / 2, cy + bh),
+                                          radius=bw / 2, fill=235)
+        else:
+            self.di.polygon([(cx - u * .55, cy - u), (cx - u * .55, cy + u),
+                             (cx + u * .95, cy)], fill=235)
 
     def _music_art(self, m, pad, top, seek=None):
         """Expanded cover; hovering reveals an in-art now-playing overlay."""
@@ -1207,6 +1245,7 @@ class Panel:
             ("head", "Music"),
             ("toggle", "backdrop", "Album backdrop", self.backdrop, "The cover, blurred, behind the page"),
             ("toggle", "queueart", "Covers in Playing Next", opts.get("queueart", True), None),
+            ("note", "music_bubble", "Music bubble: tap to play or pause, double-tap for next, hold for previous.", None, None),
             ("head", "Sound"),
             ("toggle", "soundstart", "Turn boost on at launch", opts.get("soundstart", False), None),
             ("head", "Hardware"),
@@ -1217,7 +1256,7 @@ class Panel:
         rows[rows.index(("head", "Hardware")):rows.index(("head", "Hardware"))] = [
             ("head", "Gaming"),
             ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
-            ("note", "gaming_tip", f"Gaming is click-through while locked. Hold the shortcut modifiers to drag temporarily, or use {self.hotkey_label} to unlock Gaming or the Hardware bubble.", None, None),
+            ("note", "gaming_tip", f"Gaming is click-through while locked. Hold the shortcut modifiers to drag temporarily, or use {self.hotkey_label} to unlock Gaming or either bubble.", None, None),
             ("keybind", "overlay", "Overlay lock shortcut", self.hotkey_label,
              self.hotkey_error or "Click the shortcut, then press a modified key combination"),
         ]
@@ -1332,6 +1371,8 @@ class App:
         self.glass = glass.GlassRenderer(S, round(Panel.GAMING_WIDE * S), round(self.panel.max_height() / self.ss))
         self.glass.set_supersample(self.ss)
         cfg = engine.load_config()
+        if "BLOB_MVIEW" not in os.environ and cfg.get("music_view") in ("now", "bubble"):
+            self.panel.music_view = cfg["music_view"]
         self.glassiness = float(cfg.get("glass", 0.35))
         self.captureable = bool(cfg.get("captureable", False))
         self.panel.set_compact(os.environ.get("BLOB_COMPACT", "1" if cfg.get("compact") else "0") == "1")
@@ -1351,9 +1392,13 @@ class App:
         self.springs.get("width", self.panel.w, k=185, zeta=0.86)
         self.springs.get("hardware_morph", 1.0 if self.panel.hardware_view == "bubble" else 0.0,
                          k=155, zeta=0.82)
+        self.springs.get("music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
+                         k=155, zeta=0.82)
+        self.springs.get("music_pulse", 0.0, k=120, zeta=.72)
         # Bubble mode occupies the card's former top-right corner. The fixed
         # layered window has room below it, so expansion can grow back down.
         self.hardware_top = self.glass.panel_y(round((210 + Panel.TOP) * self.S))
+        self.music_top = self.glass.panel_y(round((Panel.TOP + 118) * self.S))
         self.controls, self.old_controls = [], []
         self.visible = self.pinned = False
         self.gaming_unlocked = False
@@ -1368,6 +1413,9 @@ class App:
         self.drag_click = None
         self.drag_origin = None
         self.drag_moved = False
+        self.music_press_active = False
+        self.music_hold_fired = False
+        self.music_click_pending = False
         self.slider_drag = None
         self.pressed = None
         self.hover = None
@@ -1541,6 +1589,59 @@ class App:
         cfg["hardware_mode"] = mode
         engine.save_config(cfg)
 
+    def set_music_view(self, view):
+        if view not in ("now", "art", "search", "queue", "bubble") or view == self.panel.music_view:
+            return
+        width = self.springs.get("width", self.panel.w, k=185, zeta=.86)
+        height = self.springs.get("height", self.panel.height(self.snap), k=260, zeta=.82)
+        morph = self.springs.get(
+            "music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
+            k=155, zeta=.82)
+        if view == "bubble":
+            self.music_top = self.glass.panel_y(round(height.x / self.ss))
+        if view in ("now", "bubble"):
+            cfg = engine.load_config()
+            cfg["music_view"] = view
+            engine.save_config(cfg)
+        self.panel.music_view = view
+        self.panel.tabs_open = False
+        self.panel.tabs_t = 0.0
+        self.springs.pop("tabs", None)
+        self.panel.update_width()
+        if view == "bubble" or morph.x > .001:
+            for spring in (width, height, morph):
+                spring.k = 180.0
+                spring.c = 2 * .82 * spring.k ** .5
+        width.target = self.panel.w
+        height.target = self.panel.height(self.snap)
+        morph.target = 1.0 if view == "bubble" else 0.0
+
+    def start_music_bubble_press(self):
+        self.music_press_active = True
+        self.music_hold_fired = False
+        user32.SetCapture(self.hwnd)
+        user32.KillTimer(self.hwnd, 5)
+        user32.SetTimer(self.hwnd, 5, 520, None)
+
+    def finish_music_bubble_press(self):
+        if not self.music_press_active:
+            return False
+        self.music_press_active = False
+        user32.KillTimer(self.hwnd, 5)
+        if user32.GetCapture() == self.hwnd:
+            user32.ReleaseCapture()
+        if self.music_hold_fired:
+            self.music_hold_fired = False
+            return True
+        if self.music_click_pending:
+            self.music_click_pending = False
+            user32.KillTimer(self.hwnd, 4)
+            self.media.next()
+        else:
+            self.music_click_pending = True
+            user32.SetTimer(self.hwnd, 4, 280, None)
+        return True
+
     def cycle_hardware_mode(self):
         cycle = ["auto", "quiet", "balanced", "performance"]
         try:
@@ -1589,7 +1690,8 @@ class App:
 
     @property
     def bubble_mode(self):
-        return self.panel.page == "blob" and self.panel.hardware_view == "bubble"
+        return ((self.panel.page == "blob" and self.panel.hardware_view == "bubble") or
+                (self.panel.page == "music" and self.panel.music_view == "bubble"))
 
     @property
     def bubble_drag_active(self):
@@ -1713,6 +1815,7 @@ class App:
     def show(self):
         self.snap = self.mon.snapshot() or self.snap or empty_snapshot()
         self.visible = True
+        self.music_press_active = self.music_hold_fired = self.music_click_pending = False
         self.gaming_unlocked = False
         self.bubble_unlocked = False
         self.gaming_modifier_drag = False
@@ -1742,6 +1845,9 @@ class App:
         self.bubble_unlocked = False
         self.gaming_modifier_drag = False
         self.hotkey_editing = self.panel.hotkey_editing = False
+        self.music_press_active = self.music_hold_fired = self.music_click_pending = False
+        user32.KillTimer(self.hwnd, 4)
+        user32.KillTimer(self.hwnd, 5)
         self.apply_gaming_input()
         self.gaming.set_active(False)
         self.mouse_in = False
@@ -1899,6 +2005,17 @@ class App:
             "hardware_morph", 1.0 if self.panel.hardware_view == "bubble" else 0.0,
             k=155, zeta=0.82)
         morph.target = 1.0 if self.panel.page == "blob" and self.panel.hardware_view == "bubble" else 0.0
+        music_morph = self.springs.get(
+            "music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
+            k=155, zeta=.82)
+        music_morph.target = 1.0 if self.panel.page == "music" and self.panel.music_view == "bubble" else 0.0
+        pulse = self.springs.get("music_pulse", 0.0, k=120, zeta=.72)
+        if music_morph.target and self.media.playing:
+            spectrum = getattr(self.sound, "spectrum", None)
+            energy = float(np.mean(spectrum)) if spectrum is not None and len(spectrum) else 0.0
+            pulse.target = min(1.0, .18 + .62 * energy + .10 * (1 + math.sin(now * 5.2)))
+        else:
+            pulse.target = 0.0
         tabs = self.springs.get("tabs", 0.0, k=300, zeta=0.85)
         tabs.target = 1.0 if self.panel.tabs_open else 0.0
         if abs(tabs.x - self.panel.tabs_t) > 0.004:     # redraw the labels as the pill opens
@@ -1922,7 +2039,7 @@ class App:
                 self.am.refresh_queue(force=True)
             seen = (m.art_version, m.playing, m.active, m.title)
             view = self.panel.music_view
-            live = (view in ("now", "art") and m.playing) or view == "search"  # progress / caret
+            live = (view in ("now", "art", "bubble") and m.playing) or view == "search"  # progress / caret
             if seen != self.media_seen or self.am.version != self.am_seen or \
                     (live and now - self.last_text > (0.25 if view == "now" else 0.5)):
                 if seen != self.media_seen:
@@ -1970,7 +2087,8 @@ class App:
         self.light += (target - self.light) * 0.25
         self.light /= np.linalg.norm(self.light) + 1e-6
         self.light = np.round(self.light, 3)
-        self.glass.set_panel_shape(morph.x)
+        self.glass.set_panel_shape(max(morph.x, music_morph.x))
+        self.glass.set_bubble_pulse(pulse.x if self.panel.page == "music" else 0.0)
         self.glass.render(self.hwnd, self.pos[0], self.pos[1], width.x / self.ss,
                           panel_h, fade, tuple(self.light), self.glassiness, panel_y=panel_y)
         if fade >= 0.999 and self.old_controls:
@@ -2039,10 +2157,13 @@ class App:
         return ox.x, oy.x
 
     def _panel_y(self, height):
-        """Top-align the hardware morph; all other pages keep the bottom tab-bar anchor."""
+        """Bubble morphs preserve the top edge of the card they came from."""
         morph = self.springs.get("hardware_morph", 0.0)
         if self.panel.page == "blob" and (self.panel.hardware_view == "bubble" or morph.x > .001):
             return self.hardware_top
+        music_morph = self.springs.get("music_morph", 0.0)
+        if self.panel.page == "music" and (self.panel.music_view == "bubble" or music_morph.x > .001):
+            return self.music_top
         return self.glass.panel_y(int(round(height)))
 
     def panel_local(self, lp):
@@ -2103,12 +2224,8 @@ class App:
         elif kind == "preset":
             self.sound.set_preset(key)
         elif kind == "mview":
-            self.panel.music_view = key
+            self.set_music_view(key)
             self.panel.scroll = {}
-            if key == "art":
-                self.panel.tabs_open = False
-                self.panel.tabs_t = 0
-                self.springs.pop("tabs", None)
             crossfade = True
             self.old_page_springs()
             if key == "queue":
@@ -2235,6 +2352,18 @@ class App:
                 user32.KillTimer(hwnd, 3)
                 self._replay_keys()
                 return 0
+            if msg == WM_TIMER and wp == 4:
+                user32.KillTimer(hwnd, 4)
+                if self.music_click_pending:
+                    self.music_click_pending = False
+                    self.media.toggle()
+                return 0
+            if msg == WM_TIMER and wp == 5:
+                user32.KillTimer(hwnd, 5)
+                if self.music_press_active:
+                    self.music_hold_fired = True
+                    self.media.previous()
+                return 0
             if msg == WM_APP_TOGGLE:
                 if self.visible:
                     self.hide()
@@ -2346,6 +2475,8 @@ class App:
                     self.drag_origin = (cx, cy)
                     self.drag_moved = False
                     user32.SetCapture(hwnd)
+                elif h == "mbubble:gesture":
+                    self.start_music_bubble_press()
                 elif h:
                     self.pressed = h
                     self.click(h, x)
@@ -2355,6 +2486,13 @@ class App:
                     user32.SetCapture(hwnd)
                 return 0
             if msg in (WM_LBUTTONUP, WM_CAPTURECHANGED):
+                if self.music_press_active:
+                    if msg == WM_LBUTTONUP:
+                        self.finish_music_bubble_press()
+                    else:
+                        self.music_press_active = self.music_hold_fired = False
+                        user32.KillTimer(hwnd, 5)
+                    return 0
                 deferred_click = self.drag_click if self.drag and not self.drag_moved and msg == WM_LBUTTONUP else None
                 self.pressed = None
                 if self.slider_drag:

@@ -19,6 +19,16 @@ Windows app is already installed.
 - The top-right anchor stays fixed during the morph. Bubble placement is locked by default and
   becomes draggable through the same user-editable overlay shortcut used by Gaming.
 
+## Music card and player bubble
+
+- The Music card keeps artwork, metadata, timeline and transport clear of its unmarked corner
+  bubble control. The same continuous width, height, content and silhouette springs contract it
+  toward that top-right control instead of replacing the card with a flick.
+- The player bubble breathes subtly with the live audio spectrum. Its main lobe supports tap to
+  play or pause, double-tap for next, and hold for previous; its attached satellite restores the
+  Music card. Playback comes from the current Windows media session and remains service-neutral.
+  The shared overlay shortcut unlocks the bubble for dragging and relocks it for transport gestures.
+
 ## Gaming and queue extension
 
 - Gaming adds the approved slim, draggable strip: FPS and frame time, CPU/GPU

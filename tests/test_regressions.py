@@ -97,7 +97,8 @@ class LayoutTests(unittest.TestCase):
             for compact in (False, True):
                 for page, view in (("blob", "now"), ("sound", "now"), ("settings", "now"),
                                    ("music", "now"), ("music", "art"),
-                                   ("music", "queue"), ("music", "search")):
+                                   ("music", "queue"), ("music", "search"),
+                                   ("music", "bubble")):
                     with self.subTest(dpi=dpi, compact=compact, page=page, view=view):
                         p = self.panel(dpi, compact, page, view)
                         p.tabs_t = 1
@@ -135,6 +136,30 @@ class LayoutTests(unittest.TestCase):
         self.draw(p)
         self.assertGreater(p.height(self.snap), next(iter(sizes))[1])
         self.assertNotIn("tabs", p.rects)
+
+    def test_music_card_bubble_affordance_clears_art_and_seek(self):
+        p = self.panel(page="music", view="now")
+        self.draw(p)
+        self.assertIn("mview:bubble", p.rects)
+        bubble = p.rects["mview:bubble"]
+        for key in ("mview:art", "slider:seek"):
+            self.assertIn(key, p.rects)
+            self.assertFalse(intersects(bubble, p.rects[key]), key)
+        self.assert_bounds(p)
+
+    def test_music_bubble_has_gesture_body_and_restore_satellite(self):
+        p = self.panel(page="music", view="bubble")
+        self.draw(p)
+        self.assertEqual(p.w, p.BUBBLE_W * p.S)
+        self.assertEqual(p.height(self.snap), p.BUBBLE_H * p.S)
+        self.assertIn("mbubble:gesture", p.rects)
+        self.assertIn("mview:now", p.rects)
+        self.assertNotIn("tabs", p.rects)
+        # The fused lobes overlap visually; the satellite is registered last so
+        # it wins hit testing in the shared neck while the body owns its centre.
+        self.assertEqual(p.hit(79 * p.S, 22 * p.S), "mview:now")
+        self.assertEqual(p.hit(43 * p.S, 62 * p.S), "mbubble:gesture")
+        self.assert_bounds(p)
 
     def test_missing_audio_driver_has_setup_action_in_both_sizes(self):
         self.sound.cable = False
@@ -419,6 +444,51 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(blob.hotkey_label(blob.MOD_CONTROL | blob.MOD_SHIFT, ord("K")),
                          "Ctrl + Shift + K")
         self.assertEqual(blob.parse_hotkey({"mods": 0, "vk": ord("Q")}), blob.DEFAULT_HOTKEY)
+
+    def test_music_view_change_preserves_card_top_and_morphs(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = blob.Panel(1)
+        app.panel.page = "music"
+        app.snap = fixtures()[0]
+        app.springs = blob.Springs()
+        app.glass = NS(panel_y=lambda height: 900 - height)
+        app.ss = blob.Panel.SS
+        old_width, old_height = app.panel.w, app.panel.height(app.snap)
+        app.springs.get("width", old_width, k=185, zeta=.86)
+        app.springs.get("height", old_height, k=260, zeta=.82)
+        app.springs.get("music_morph", 0, k=155, zeta=.82)
+        with patch.object(blob.engine, "load_config", return_value={}), \
+             patch.object(blob.engine, "save_config"):
+            app.set_music_view("bubble")
+        self.assertEqual(app.springs["width"].target, blob.Panel.BUBBLE_W * app.panel.S)
+        self.assertEqual(app.springs["height"].target, blob.Panel.BUBBLE_H * app.panel.S)
+        self.assertEqual(app.springs["music_morph"].target, 1)
+        self.assertEqual(app.music_top, 900 - round(old_height / app.ss))
+        self.assertEqual(app._panel_y(49), app.music_top)
+
+    def test_music_bubble_tap_double_tap_and_hold(self):
+        app = blob.App.__new__(blob.App)
+        app.hwnd = 101
+        app.panel = NS(page="music", music_view="bubble")
+        app.visible = True
+        app.gaming_unlocked = app.gaming_modifier_drag = False
+        app.media = Mock()
+        app.music_press_active = app.music_hold_fired = app.music_click_pending = False
+        with patch.object(blob, "user32") as user32:
+            user32.GetCapture.return_value = app.hwnd
+            app.start_music_bubble_press()
+            app.finish_music_bubble_press()
+            self.assertTrue(app.music_click_pending)
+            app.start_music_bubble_press()
+            app.finish_music_bubble_press()
+            app.media.next.assert_called_once_with()
+            app.media.toggle.assert_not_called()
+
+            app.start_music_bubble_press()
+            app.wndproc(app.hwnd, blob.WM_TIMER, 5, 0)
+            app.media.previous.assert_called_once_with()
+            app.finish_music_bubble_press()
+            self.assertFalse(app.music_click_pending)
 
     def test_hardware_bubble_cycles_only_quick_modes(self):
         app = blob.App.__new__(blob.App)

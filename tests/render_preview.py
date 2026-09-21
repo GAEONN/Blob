@@ -83,6 +83,7 @@ def main(output, gaming=False, errors=False):
              ("Settings / compact", True, "settings", "now", 10, False),
              ("Sound / conflict", False, "sound", "now", 0, True),
              ("Music / mini player", True, "music", "now", 0, False),
+             ("Music / player bubble", True, "music", "bubble", 0, False),
              ("Artwork / hover controls", True, "music", "art", 0, False),
              ("Hardware / card", False, "blob", "now", 0, False),
              ("Hardware / details", False, "blob", "details", 0, False),
@@ -140,7 +141,10 @@ def main(output, gaming=False, errors=False):
                 if key in lens:
                     lens[key] /= p.SS
         renderer.set_lenses(lenses)
-        renderer.set_panel_shape(1 if page == "blob" and p.hardware_view == "bubble" else 0)
+        bubble = ((page == "blob" and p.hardware_view == "bubble") or
+                  (page == "music" and p.music_view == "bubble"))
+        renderer.set_panel_shape(1 if bubble else 0)
+        renderer.set_bubble_pulse(.6 if page == "music" and p.music_view == "bubble" else 0)
         renderer.set_viz([v / p.SS for v in viz] if viz else None, np.linspace(.2, .9, 28), 1)
         height = round(p.height(snap) / p.SS)
         with patch.object(glass.user32, "UpdateLayeredWindow", return_value=True):

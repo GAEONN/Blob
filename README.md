@@ -67,6 +67,13 @@ opens as an Apple Music-inspired horizontal mini player. Hovering its cover reve
 affordance; selecting it grows into a cover-first view. Hover the expanded cover to reveal metadata,
 timeline, transport and the collapse control that returns to the mini player.
 
+The mini player's unmarked corner circle morphs the card into a small audio-reactive player bubble,
+anchored to the card's top-right corner. Tap the large lobe to play or pause, double-tap it for the
+next track, or hold it for the previous track. Select the small attached lobe to restore the card.
+These controls use the active Windows media session, so they are not tied to Apple Music. The same
+editable overlay shortcut as Gaming unlocks either bubble for dragging; lock it again to use the
+Music gestures.
+
 Settings also holds **Include Blob in screenshots and recordings**. Off (the default) keeps the
 pane invisible to capture so the glass can refract live. On makes it visible to capture tools, at
 the cost of freezing the glass to the backdrop captured when it appeared, since it would otherwise

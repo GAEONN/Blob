@@ -164,6 +164,12 @@ every COM/device call on a worker thread.
 * Avoid a universal Regular/Compact switch. Music rests as a 340 px Apple Music-style mini player;
   hovering its cover reveals an expand affordance. Expanded artwork reveals its metadata, timeline,
   transport and collapse control only while hovered.
+* Music also owns an unmarked contextual corner circle. Keep its footprint clear of metadata and the
+  seek target, then spring the mini player continuously into an audio-reactive fused bubble anchored
+  at that corner. The main lobe uses tap for play/pause, double-tap for next and hold for previous;
+  the attached satellite restores the mini player. Add the gesture legend to Music settings rather
+  than labelling the bubble itself. The shared overlay shortcut unlocks either bubble for dragging;
+  relocking the Music bubble restores its transport gestures.
 * Hardware owns a contextual 104 × 98 mode bubble instead of inheriting the universal compact
   layout. Its card affordance is one unmarked glass circle. The card's width, height, crossfaded
   content and signed-distance silhouette must spring continuously into the bubble, which is the

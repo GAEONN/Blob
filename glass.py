@@ -192,7 +192,8 @@ uniform float fade;                   // 0 = previous content, 1 = current
 uniform vec2 bg_size, cap_origin;     // window px + cap_origin = bg px
 uniform vec2 panel_pos, panel_size;   // panel rect in window px
 uniform float panel_r;
-uniform float panel_morph;            // 0 card, 1 hardware mode bubble; continuous during transition
+uniform float panel_morph;            // 0 card, 1 contextual bubble; continuous during transition
+uniform float bubble_pulse;           // music energy/breath, 0..1
 uniform vec2 light;
 uniform float S, glassiness;
 uniform int n_lens;
@@ -238,9 +239,9 @@ float sdPanel(vec2 p) {
     float u = min(panel_size.x / 104.0, panel_size.y / 98.0);
     vec2 main_c = panel_size * vec2(43.0 / 104.0, 55.0 / 98.0);
     vec2 nub_c = panel_size * vec2(79.5 / 104.0, 22.5 / 98.0);
-    float a = length(p - main_c) - 39.0 * u;
-    float b = length(p - nub_c) - 21.5 * u;
-    float k = 9.0 * u;
+    float a = length(p - main_c) - (39.0 + 2.8 * bubble_pulse) * u;
+    float b = length(p - nub_c) - (21.5 + 0.7 * bubble_pulse) * u;
+    float k = (9.0 + 1.4 * bubble_pulse) * u;
     float h = max(k - abs(a - b), 0.0) / max(k, 1e-3);
     float bubble = min(a, b) - h * h * k * 0.25;
     float t = smoothstep(0.0, 1.0, clamp(panel_morph, 0.0, 1.0));
@@ -582,6 +583,7 @@ class GlassRenderer:
         self.prog["S"].value = float(scale)
         self.prog["panel_r"].value = float(34 * scale)
         self.prog["panel_morph"].value = 0.0
+        self.prog["bubble_pulse"].value = 0.0
         self.prog["viz_alpha"].value = 0.0
         self.prog["n_lens"].value = 0
         self.prog["ambient"].value = (0.0, 0.0, 0.0, 0.0)
@@ -644,6 +646,9 @@ class GlassRenderer:
 
     def set_panel_shape(self, morph):
         self.prog["panel_morph"].value = float(max(0.0, min(1.0, morph)))
+
+    def set_bubble_pulse(self, pulse):
+        self.prog["bubble_pulse"].value = float(max(0.0, min(1.0, pulse)))
 
     def set_supersample(self, ss):
         self.prog["ink_ss"].value = float(ss)

@@ -17,6 +17,7 @@ class GamingInputTests(unittest.TestCase):
         a.visible, a.gaming_unlocked, a.gaming_modifier_drag = True, False, False
         a.drag, a.slider_drag, a.pressed = (10, 10), None, "tabs"
         a.drag_click, a.drag_origin, a.drag_moved = None, None, False
+        a.music_press_active = a.music_hold_fired = a.music_click_pending = False
         a.hover, a.mouse_xy, a.mouse_in = "tabs", (12, 12), True
         a.attached, a.detaching = "tabs", None
         a.cur_move = 303
@@ -131,6 +132,18 @@ class GamingInputTests(unittest.TestCase):
         a.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
         self.assertFalse(a.bubble_unlocked)
 
+    def test_same_hotkey_unlocks_music_bubble_for_dragging(self):
+        a = self.app
+        a.panel = NS(page="music", music_view="bubble", tabs_open=False)
+        a.bubble_unlocked = False
+        a.frame_dirty = False
+        a.wndproc(101, blob.WM_HOTKEY, blob.GAMING_HOTKEY, 0)
+        self.assertTrue(a.bubble_unlocked)
+        self.assertTrue(a.bubble_drag_active)
+        self.assertTrue(a.frame_dirty)
+        a.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
+        self.assertFalse(a.bubble_unlocked)
+
     def test_unlocked_bubble_distinguishes_click_from_drag(self):
         a = self.app
         a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
@@ -156,6 +169,20 @@ class GamingInputTests(unittest.TestCase):
         a.click.assert_not_called()
         self.assertEqual(a.pos, [140, 110])
         self.assertTrue(a.pinned)
+
+    def test_unlocked_music_bubble_drags_instead_of_starting_gesture(self):
+        a = self.app
+        a.panel = NS(page="music", music_view="bubble", tabs_open=False,
+                     hit=Mock(return_value="mbubble:gesture"))
+        a.bubble_unlocked, a.drag = True, None
+        a.panel_local = Mock(return_value=(43, 55))
+        a.start_music_bubble_press = Mock()
+        a.pos = [100, 80]
+        with patch.object(blob, "cursor_pos", return_value=(130, 100)):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+        self.assertEqual(a.drag, (30, 20))
+        a.start_music_bubble_press.assert_not_called()
+        self.u.SetCapture.assert_called_once_with(101)
 
     def test_hotkey_editor_re_registers_and_persists_binding(self):
         a = self.app
