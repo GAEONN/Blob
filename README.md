@@ -1,6 +1,6 @@
 # Blob v4 — SmallBlob + Dashboard
 
-One application, two presentations: the unchanged SmallBlob v3 layouts and the large
+One application, two presentations: the SmallBlob layouts and the large
 Dashboard showing Music, System, Sound and Gaming together. They share one window, tray,
 audio controller, media session, sensor monitor and settings profile. Switching does not
 restart playback or create another DSP engine. See [V4-NOTES.md](V4-NOTES.md).
@@ -8,10 +8,10 @@ restart playback or create another DSP engine. See [V4-NOTES.md](V4-NOTES.md).
 Right-click the tray icon → **SmallBlob / Dashboard / Game dock**, or press **F10 while
 Blob is focused** to switch between small and full views. F11 resizes Dashboard only.
 The game dock expands downward and starts click-through. The shared default lock shortcut
-is **Ctrl+Alt+V**, or your migrated v3 shortcut. Do not run older enhancers alongside v4.
+is **Ctrl+Alt+V**, or your migrated shortcut. Do not run older enhancers alongside v4.
 
-Older versions are preserved: `main` is unchanged, and tag **v3.0.0** contains the pre-pairing
-SmallBlob and standalone Dashboard. Version 4 lives on **v4-unified** and **v4.0.0**.
+Blob v4 is the current release and is intended to live on `main`. The historical **v3.0.0**
+tag remains available for reference; **v4.0.1** is the current paired application patch.
 
 Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
 liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
@@ -24,13 +24,13 @@ It is built with Python, OpenGL, and native Win32 APIs—no browser window and n
 Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/GAEONN/Blob/v4.0.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/GAEONN/Blob/v4.0.1/install.ps1 | iex
 ```
 
 The installer downloads this pinned release to `%LOCALAPPDATA%\Programs\Blob-v4`, creates an isolated Python
 environment, installs the required packages, creates shortcuts, verifies the installation, and
 launches the app. It creates **Blob v4** on the Desktop without replacing older shortcuts.
-Preferences live in `%LOCALAPPDATA%\Blob-v4`; first launch copies v3 preferences without
+Preferences live in `%LOCALAPPDATA%\Blob-v4`; first launch copies legacy preferences without
 editing the original and leaves audio boost off. Re-running repairs this v4 installation.
 
 One administrator prompt may be required for optional system integrations:
@@ -154,7 +154,7 @@ avoid recursive self-capture.
 Clone the repository and run the installer locally:
 
 ```powershell
-git clone --branch v4.0.0 https://github.com/GAEONN/Blob.git
+git clone --branch v4.0.1 https://github.com/GAEONN/Blob.git
 cd Blob
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```

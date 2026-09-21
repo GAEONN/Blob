@@ -9,9 +9,9 @@ colors:
 # Design System: Blob Dashboard
 
 v4 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
-shared settings/controllers and a mode-dependent shader anchor. The historical standalone
-isolation and Ctrl+Alt+D descriptions below are superseded by the v4 profile and shared
-Ctrl+Alt+V shortcut (or migrated custom binding); see ../V4-NOTES.md.
+shared settings/controllers and a mode-dependent shader anchor. The shared v4 profile lives
+in `%LOCALAPPDATA%\Blob-v4`, uses the `Local\BlobUnified-v4` mutex, and defaults to
+Ctrl+Alt+V (or a migrated custom binding); see ../V4-NOTES.md.
 
 ## Overview
 
@@ -51,9 +51,13 @@ The inherited 34 outer radius with an 18 inset yields 16-radius cards. Artwork i
 
 ## Components
 
-**Keyboard controls.** Tab/Shift+Tab cycle registered targets when visible and unlocked, excluding decorative artwork/gesture regions. Focus has a persistent full-coverage inset outline independent of hover. Enter/Space activates focused non-slider controls; Search keeps text entry. Focused sliders use Left/Right steps of 0.02 and Home/End endpoints, clamped to [0,1]. Seek commits its position; Glass and sound adjustments persist through their existing handlers. F11 resizes the overview; Escape exits an unlocked dock. The dock starts click-through, with Ctrl+Alt+D as the default configurable lock chord. Its satellite expands, top chevron collapses, and Blob returns to the overview. Dashboard disables bubble dragging; it uses the system pointer.
+**Keyboard controls.** Tab/Shift+Tab cycle registered targets when visible and unlocked, excluding decorative artwork/gesture regions. Focus has a persistent full-coverage inset outline independent of hover. Enter/Space activates focused non-slider controls; Search keeps text entry. Focused sliders use Left/Right steps of 0.02 and Home/End endpoints, clamped to [0,1]. Seek commits its position; Glass and sound adjustments persist through their existing handlers. F11 resizes the overview; Escape exits an unlocked dock. The dock starts click-through, with Ctrl+Alt+V as the default configurable lock chord. Its satellite expands, top chevron collapses, and Blob returns to the overview. Dashboard disables bubble dragging; it uses the system pointer.
 
-**Isolated companion shell.** Dashboard owns `%LOCALAPPDATA%\Blob-Dashboard`, the `Local\BlobDashboard` mutex, tray identity and the `Blob Dashboard` startup registry value targeting `dashboard/app.pyw --startup`. Runtime bindings are process-local. Settings remain contextual and separate from SmallBlob. See PRODUCT.md for shared Windows media/audio effects and service limitations; isolation does not imply private audio routing.
+**Unified v4 shell.** Dashboard runs inside the same `Blob v4` process as SmallBlob. It shares
+the tray, `%LOCALAPPDATA%\Blob-v4` settings, `Local\BlobUnified-v4` mutex, monitor, media
+session, audio controller and gaming telemetry. `dashboard/app.pyw` requests the Dashboard
+view from `../app.pyw`; it does not create a second engine. See PRODUCT.md for shared
+Windows media/audio effects and service limitations.
 
 The focus outline is implemented in `DashboardPanel.draw_focus`, shared by runtime drawing and the saved synthetic `keyboard-focus.png` fixture. A fixture is not evidence of live keyboard operation on the latest build.
 

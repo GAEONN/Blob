@@ -1,4 +1,4 @@
-"""Blob — tray app. The taskbar shows the CPU temperature; click it for a liquid-glass
+"""Blob — tray app. The taskbar uses Blob's glass identity mark; click it for a liquid-glass
 panel with hardware, sound, music, gaming and settings views. Hardware monitoring is read-only.
 Sound provides system-wide boost / EQ like FxSound, with a glass spectrum. Drag the panel to pin it
 anywhere (e.g. over a game or video); click the tray number again to hide it."""
@@ -36,7 +36,7 @@ def music_visualizer_bands(spectrum, peak):
     return np.full(28, np.sqrt(peak), dtype=np.float32)
 
 
-APP_NAME = "Blob v3"
+APP_NAME = "Blob v4"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 FONTS = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Fonts")
 
@@ -95,6 +95,9 @@ WM_APP_GAMING_LOCK, WM_HOTKEY, GAMING_HOTKEY = 0x8004, 0x312, 1
 WS_EX_TRANSPARENT, WS_EX_NOACTIVATE = 0x20, 0x08000000
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
 DEFAULT_HOTKEY = (MOD_CONTROL | MOD_ALT, ord("V"))
+LEFT_CONTROL = 0xA2
+RIGHT_CONTROL = 0xA3
+DUAL_CONTROL_LABEL = "Left Ctrl + Right Ctrl"
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -243,7 +246,27 @@ def set_startup(on):
 
 
 # ─────────────────────────── tray icon ───────────────────────────
+_TRAY_LOGO = None
+
+
 def tray_image(temp):
+    """Return Blob's glass identity mark, independent of the current temperature."""
+    global _TRAY_LOGO
+    if _TRAY_LOGO is None:
+        try:
+            logo = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                           "blob-logo.png")).convert("RGBA")
+            resampling = getattr(Image, "Resampling", Image).LANCZOS
+            logo.thumbnail((58, 58), resampling)
+            canvas = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            canvas.alpha_composite(logo, ((64 - logo.width) // 2, (64 - logo.height) // 2))
+            _TRAY_LOGO = canvas
+        except OSError:
+            _TRAY_LOGO = None
+    if _TRAY_LOGO is not None:
+        return _TRAY_LOGO.copy()
+
+    # Source-only fallback if the generated logo asset is missing.
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -843,7 +866,7 @@ class Panel:
         return self._music_card(m, snd, seek, pad, top)
 
     def _music_card(self, m, snd, seek, pad, top):
-        """V1's cover-first player, with optional bubble and volume utilities."""
+        """Regular cover-first player, with optional bubble and volume utilities."""
         S, W = self.S, self.w
         a = round(W - 2*pad)
         self._artwork(m, round(pad), round(top), a, self.inner_radius(pad), 44)
@@ -876,7 +899,7 @@ class Panel:
                        "repeat_one" if rep == "one" else "repeat", active=rep != "off")
 
     def _music_mini(self, m, snd, seek, pad, top):
-        """V1 proportions: square cover, clear seek line and filled transport."""
+        """Regular proportions: square cover, clear seek line and filled transport."""
         S, W = self.S, self.w
         a = round(54*S)
         self._artwork(m, round(pad), round(top+2*S), a, 6*S, 20)
@@ -1352,8 +1375,7 @@ class Panel:
             ("note", "overlay_info", "One lock state is shared by every tab and only changes when you use the shortcut or tray command.", None, None),
             ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
             ("note", "gaming_tip", f"Blob stays unlocked across tabs until you use {self.hotkey_label} to lock it. While locked it passes clicks through; in Gaming, hold the shortcut modifiers to drag temporarily.", None, None),
-            ("keybind", "overlay", "Overlay lock shortcut", self.hotkey_label,
-             self.hotkey_error or "Click the shortcut, then press a modified key combination"),
+            ("note", "overlay", f"{self.hotkey_label} locks or unlocks Blob in every view.", None, None),
         ]
         h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46, "keybind": 58}
         layouts = []
@@ -1483,7 +1505,7 @@ class App:
         self.panel.gaming_view = cfg.get("gaming_view", "strip")
         self.panel.options = dict(cfg.get("options", {}))
         self.hotkey_mods, self.hotkey_vk = parse_hotkey(cfg.get("overlay_hotkey", {}))
-        self.panel.hotkey_label = hotkey_label(self.hotkey_mods, self.hotkey_vk)
+        self.panel.hotkey_label = DUAL_CONTROL_LABEL
         self.startup = startup_enabled()
         self.springs = Springs()
         self.springs.get("width", self.panel.w, k=185, zeta=0.86)
@@ -1506,6 +1528,8 @@ class App:
         self.gaming_modifier_drag = False
         self.hotkey_editing = False
         self.hotkey_swallow = set()
+        self.dual_control_down = {LEFT_CONTROL: False, RIGHT_CONTROL: False}
+        self.dual_control_latched = False
         if PROFILE is not None:
             self.pinned = True  # profiling: keep the panel up even when focus moves elsewhere
         self.pos = None  # window top-left (screen px)
@@ -1552,11 +1576,10 @@ class App:
         self.cur_arrow = user32.LoadCursorW(None, 32512)
         self.cur_move = user32.LoadCursorW(None, 32646)
         self.apply_gaming_input()
-        self.gaming_hotkey_registered = bool(user32.RegisterHotKey(
-            self.hwnd, GAMING_HOTKEY, self.hotkey_mods | MOD_NOREPEAT, self.hotkey_vk))
-        if not self.gaming_hotkey_registered:
-            self.panel.hotkey_error = "Shortcut is already in use"
-            engine.log(f"{self.panel.hotkey_label} is unavailable; use the tray menu to unlock the overlay.")
+        # RegisterHotKey cannot distinguish the physical left and right Ctrl
+        # keys and can be claimed by a game. The global low-level hook below
+        # handles the dedicated two-control chord instead.
+        self.gaming_hotkey_registered = False
 
         self.icon = pystray.Icon(APP_NAME, tray_image(None), APP_NAME, menu=pystray.Menu(
             pystray.MenuItem("Open", lambda: user32.PostMessageW(self.hwnd, WM_APP_TOGGLE, 0, 0),
@@ -1839,12 +1862,11 @@ class App:
         self._overlay_unlocked = bool(value)
 
     def hotkey_modifiers_held(self):
-        mods = getattr(self, "hotkey_mods", DEFAULT_HOTKEY[0])
         held = lambda vk: bool(user32.GetAsyncKeyState(vk) & 0x8000)
-        checks = ((MOD_CONTROL, (0x11,)), (MOD_ALT, (0x12,)), (MOD_SHIFT, (0x10,)),
-                  (MOD_WIN, (0x5B, 0x5C)))
-        return bool(mods) and all(not (mods & flag) or any(held(vk) for vk in keys)
-                                  for flag, keys in checks)
+        # The same physical chord is used for the temporary drag override.
+        # Checking both sides avoids the old generic Ctrl state being lost by
+        # games that consume or remap one of the modifier messages.
+        return held(LEFT_CONTROL) and held(RIGHT_CONTROL)
 
     def update_gaming_modifier_drag(self):
         """Temporarily accept drag input while the configured shortcut modifiers are held."""
@@ -1943,6 +1965,8 @@ class App:
         self.visible = True
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
         self.gaming_modifier_drag = False
+        self.dual_control_down = {LEFT_CONTROL: False, RIGHT_CONTROL: False}
+        self.dual_control_latched = False
         self.apply_gaming_input()
         self.draw_content()
         h = self.springs["height"]
@@ -1966,6 +1990,8 @@ class App:
 
     def hide(self):
         self.gaming_modifier_drag = False
+        self.dual_control_down = {LEFT_CONTROL: False, RIGHT_CONTROL: False}
+        self.dual_control_latched = False
         self.hotkey_editing = self.panel.hotkey_editing = False
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
         user32.KillTimer(self.hwnd, 4)
@@ -2744,6 +2770,20 @@ class App:
                         if not down:
                             self.hotkey_swallow.discard(k.vkCode)
                         return 1
+                    if k.vkCode in (LEFT_CONTROL, RIGHT_CONTROL):
+                        states = getattr(self, "dual_control_down", {
+                            LEFT_CONTROL: False, RIGHT_CONTROL: False})
+                        self.dual_control_down = states
+                        states[k.vkCode] = down
+                        if down and not self.hotkey_editing and not getattr(self, "dual_control_latched", False) \
+                                and states[LEFT_CONTROL] and states[RIGHT_CONTROL]:
+                            # Post instead of mutating layered-window styles
+                            # inside the hook callback. This works even when a
+                            # game owns focus, and the latch prevents repeats.
+                            self.dual_control_latched = True
+                            user32.PostMessageW(self.hwnd, WM_APP_GAMING_LOCK, 0, 0)
+                        elif not down:
+                            self.dual_control_latched = False
                     if self.hotkey_editing:
                         if down:
                             self.hotkey_swallow.add(k.vkCode)

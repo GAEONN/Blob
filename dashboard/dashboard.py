@@ -39,7 +39,7 @@ class DashboardPanel(BasePanel):
         self.regions = {}
         self.focus_key = None
         self.page = 'music'
-        self.hotkey_label = 'Ctrl + Alt + D'
+        self.hotkey_label = base.DUAL_CONTROL_LABEL
 
     def set_compact(self, compact):
         # SmallBlob size preferences never apply to this surface.
@@ -279,9 +279,11 @@ class DashboardPanel(BasePanel):
             for j,line in enumerate(self.wrap(hint,11,'Regular',x1-x0-40*S)):
                 self.label(x0+20*S,y+40*S+j*15*S,line,11,'Regular',215)
         self.label(x0+20*S,y0+369*S,'Game dock lock',13,'Semibold Text',255)
-        self.button('hotkey:overlay','Press a shortcut…' if self.hotkey_editing else self.hotkey_label,
-                    (x0+20*S,y0+402*S,x1-20*S,y0+438*S),True)
-        self.label(x0+20*S,y0+455*S,self.fit(self.hotkey_error or 'Click to change shortcut',11,'Regular',x1-x0-40*S),11,'Regular',205)
+        self.static((x0+20*S,y0+402*S,x1-20*S,y0+438*S),15*S,strength=5*S,bevel=8*S,
+                    rim=.8,frost=1.0,lift=.10,raised=.7)
+        self.label((x0+x1)/2,y0+420*S,getattr(self,'hotkey_label',base.DUAL_CONTROL_LABEL),11,
+                   'Semibold Text',255,'mm')
+        self.label(x0+20*S,y0+455*S,'Locks or unlocks Blob in every view.',11,'Regular',205)
         self.label(x0+20*S,y1-32*S,getattr(self,'settings_note','SmallBlob settings stay separate.'),11,'Regular',210)
 
 
@@ -331,10 +333,12 @@ class DashboardApp(base.App):
     def bubble_mode(self):return self.panel.dock and not self.panel.dock_open
 
     @property
-    def overlay_lock_available(self):return self.panel.dock
+    def overlay_lock_available(self):return True
 
     def toggle_overlay_input(self):
-        if self.panel.dock:super().toggle_overlay_input()
+        # The v4 lock is global: the same chord must work in the overview,
+        # Music, Settings, and the detached game dock.
+        super().toggle_overlay_input()
 
     def bubble_drag_key(self,key):return False
 
@@ -355,11 +359,15 @@ class DashboardApp(base.App):
         super().show()
 
     def apply_gaming_input(self):
-        if not self.panel.dock:self._overlay_unlocked=True
         super().apply_gaming_input()
         # The dashboard is a normal app; only its detached dock stays above games.
         style=user32.GetWindowLongPtrW(self.hwnd,-20)
-        style=(style|0x80)&~0x40000 if self.panel.dock else (style|0x40000)&~0x80
+        if self.panel.dock:
+            style=(style|0x80)&~0x40000
+        elif self.overlay_locked:
+            style=(style|0x80|0x08000000)&~0x40000
+        else:
+            style=(style|0x40000)&~0x80
         user32.SetWindowLongPtrW(self.hwnd,-20,style)
         user32.SetWindowPos(self.hwnd,-1 if self.panel.dock else -2,0,0,0,0,0x13)
 

@@ -1,6 +1,6 @@
 """Blob v4: two presentations, one window and one set of live controllers.
 
-The v3 UI stays unchanged. This adapter owns mode switching and the v4 profile.
+The SmallBlob layout stays stable. This adapter owns mode switching and the v4 profile.
 """
 import argparse
 import ctypes
@@ -70,7 +70,7 @@ class UnifiedRenderer(dash.BaseRenderer):
         glass.FRAG = glass.FRAG.replace(
             'vec2 q = vec2(pp.x, pp.y - (panel_size.y - size.y / ink_ss)) * ink_ss;',
             'vec2 q = vec2(pp.x, pp.y - (1.0-full_view) * (panel_size.y - size.y / ink_ss)) * ink_ss;')
-        # Preserve v3's material in SmallBlob, Dashboard's readable binary ink in full view.
+        # Preserve SmallBlob's material, Dashboard's readable binary ink in full view.
         glass.FRAG = glass.FRAG.replace(
             'vec3 ink_col = mix(vec3(1.0), vec3(0.07), ink_dark);',
             'vec3 ic = clamp(col, 0.0, 1.0);\n'
@@ -147,7 +147,7 @@ class UnifiedApp(dash.DashboardApp):
 
     @property
     def overlay_lock_available(self):
-        return not self.full or self.panel.dock
+        return True
 
     def apply_gaming_input(self):
         if self.full:
@@ -188,6 +188,7 @@ class UnifiedApp(dash.DashboardApp):
                 self.show()
             return
         active = self.panel
+        lock_state = False if getattr(active, 'dock', False) else getattr(self, '_overlay_unlocked', True)
         self.panels[current] = active
         # A detached dock must not replace the overview's saved position.
         self.positions[current] = list(self.dashboard_pos if self.full and active.dock
@@ -203,11 +204,11 @@ class UnifiedApp(dash.DashboardApp):
         self.panel.options = dict(active.options)
         self.panel.backdrop = active.backdrop
         self.panel.query = active.query
-        self.panel.hotkey_label = base.hotkey_label(self.hotkey_mods, self.hotkey_vk)
+        self.panel.hotkey_label = base.DUAL_CONTROL_LABEL
         self.full = view == 'dashboard'
         self.glass.set_view(self.full)
         self.pos = self.positions.get(view)
-        self._overlay_unlocked = True
+        self._overlay_unlocked = lock_state
         self.gaming_modifier_drag = False
         if self.full:
             self.panel.dock = self.panel.dock_open = False
@@ -218,8 +219,6 @@ class UnifiedApp(dash.DashboardApp):
             width, height = round(self.panel.window_w*self.S), round(self.panel.window_h*self.S)
         else:
             width, height = round(dash.BasePanel.GAMING_WIDE*self.S), round(self.panel.max_height()/self.ss)
-            # Returning to a gaming view must never intercept the game.
-            self._overlay_unlocked = self.panel.page != 'gaming'
         self.panel.update_width()
         self.glass.resize_surface(width, height)
         self.hardware_top = self.glass.panel_y(round((210+dash.BasePanel.TOP)*self.S))

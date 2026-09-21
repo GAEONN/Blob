@@ -87,14 +87,14 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('app.pyw',command)
         self.assertNotIn('blob.pyw',command)
 
-    def test_overview_cannot_be_locked(self):
+    def test_overview_can_use_the_global_lock(self):
         a=dash.DashboardApp.__new__(dash.DashboardApp);a.panel=self.panel()
         with patch.object(dash.base.App,'toggle_overlay_input') as toggle:
-            self.assertFalse(a.overlay_lock_available)
-            a.toggle_overlay_input();toggle.assert_not_called()
-            a.panel.dock=True
             self.assertTrue(a.overlay_lock_available)
             a.toggle_overlay_input();toggle.assert_called_once()
+            a.panel.dock=True
+            self.assertTrue(a.overlay_lock_available)
+            a.toggle_overlay_input();self.assertEqual(toggle.call_count,2)
 
     def test_restore_uses_current_work_area(self):
         a=dash.DashboardApp.__new__(dash.DashboardApp);a.panel=self.panel()

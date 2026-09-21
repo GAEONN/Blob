@@ -1,4 +1,4 @@
-# Blob 4.0.0 — Paired views
+# Blob 4.0.1 — Paired views and identity patch
 
 SmallBlob v3 and the large Dashboard are now two views of **one running application**.
 One tray icon, native window, monitor, audio controller, music session and FPS monitor are
@@ -17,12 +17,14 @@ view; there is no duplicate full-screen renderer hidden behind SmallBlob.
 
 ## Preserved versions and settings
 
-- The existing `main` branch remains unchanged.
+- The `main` branch is the current v4 release after the v4 promotion.
 - Tag `v3.0.0` preserves the exact pre-pairing v3 plus standalone Dashboard source.
-- Branch `v4-unified` and tag `v4.0.0` contain this release.
+- The paired application began at `v4.0.0`; this patch is tagged `v4.0.1` and is promoted to `main`.
+- `v4.0.1` adds the glass identity mark to the tray, app icon and Desktop shortcut, and refreshes
+  repository-facing product language to describe the vendor-neutral unified app.
 - Remote installation uses `%LOCALAPPDATA%\Programs\Blob-v4`, not the old installation.
 - The v4 profile is `%LOCALAPPDATA%\Blob-v4`. First run copies v3 preferences read-only;
-  old profiles and shortcuts are not removed. Audio boost is off on first v4 launch.
+  legacy profiles are read-only migration inputs. Audio boost is off on first v4 launch.
 - SmallBlob's visual layout and interactions are unchanged. Only its direct script entry
   now routes to the unified host. The old v3 checkout remains untouched.
 - Glass, screenshot preference, visualizer, sound settings and overlay shortcut are shared;

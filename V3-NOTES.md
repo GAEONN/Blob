@@ -1,8 +1,9 @@
-# Blob v3
+# Blob v3 — Archived release notes
 
-V3 is an isolated local checkout built from `4f78076`. V1 and Yao's V2 stay intact.
+This file documents the preserved pre-pairing v3 checkout built from `4f78076`.
+V1 and Yao's V2 are historical predecessors to the current v4 application.
 It has its own tray name, configuration folder (`%LOCALAPPDATA%\Blob-v3`), single-instance
-mutex and default lock shortcut: **Ctrl+Alt+V**. It is not pushed to GitHub yet.
+mutex and default lock shortcut: **Ctrl+Alt+V**. The source is preserved by the `v3.0.0` tag.
 
 ## Changes
 

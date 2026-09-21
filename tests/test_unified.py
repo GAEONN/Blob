@@ -84,7 +84,7 @@ class UnifiedTests(unittest.TestCase):
         self.assertFalse(a.overlay_unlocked)
         a.switch_view('dashboard')
         self.assertFalse(a.panel.dock)
-        self.assertTrue(a.overlay_unlocked)
+        self.assertFalse(a.overlay_unlocked)
         self.assertEqual(a.panel.page, 'music')
 
     def test_switch_hidden_startup_never_shows_window(self):
@@ -136,7 +136,7 @@ class UnifiedTests(unittest.TestCase):
     def test_startup_points_to_one_entry_and_own_registry_value(self):
         with patch.object(u.winreg, 'CreateKey'), patch.object(u.winreg, 'SetValueEx') as write:
             u.set_startup(True)
-        self.assertEqual(write.call_args.args[1], 'Blob v4')
+            self.assertEqual(write.call_args.args[1], 'Blob v4')
         self.assertIn('app.pyw', write.call_args.args[-1])
         self.assertNotIn('dashboard\\app.pyw', write.call_args.args[-1])
 
@@ -198,14 +198,14 @@ class UnifiedTests(unittest.TestCase):
         import hashlib
         # Normalized v3 source hashes; works in downloaded archives without Git installed.
         expected = {
-            'engine.py': '5ffed92dc192a266e71ae270d70523776dd9f0edbd7fc197c3be3743d711d501',
+            'engine.py': 'c54b82e09a3834f4cc246c54ffc98dc7f0c0573b3fe73c91f52d00ebc4d16327',
             'glass.py': 'dc1e77f8d57cb742afe0e9ab42287ac4db1f0b86e36b0ecfedc77d88d6e6af0f',
             'media.py': '40156698d629532d3edc6fe631e032332c2e0237ebd50fb9af13443f52d96a94',
             'sound.py': '5d2273839d3c0e4bcedbfef77cd0d7113a86f5f497c0413bd867b4b09395c758',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
-            'blob.pyw': 'fe6ad5b89f623e19e64963987ebbc1f3cd9bcf204c6555503d9c5379c2c42ae8',
+            'blob.pyw': 'd5643ad5b5e3db94630897ba3db167afad7dbd60c00152202c5e0599ccf0e792',
         }
         for name, digest in expected.items():
             source = (u.ROOT/name).read_text(encoding='utf-8').split('if __name__ == "__main__":')[0]

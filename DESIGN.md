@@ -1,6 +1,6 @@
 # Liquid Glass design system — build brief
 
-V3 scope: the native component notes below reconcile the approved refinement. They supersede
+V4 scope: the native component notes below reconcile the approved refinement. They supersede
 older component sizing and interaction examples in this inherited browser build brief; the
 incumbent glass world and document structure remain in place. No web sidecar is generated.
 
@@ -302,9 +302,9 @@ ellipsized text and optional covers: 42 DIP regular rows include artist captions
 while 34 DIP Compact rows show titles only. Selecting a row targets its title and
 artist in Apple Music rather than relying on a stale queue index.
 
-V3 source check: `blob.pyw` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
+Current v4 source check: `blob.pyw` and `unified.py` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
 `reactive.py` (relative transients), `engine.py` (provider/ID and zero-RPM preservation),
-`V3-NOTES.md` and `.impeccable/surfaces/v3.md`. Preview artwork is synthetic test material;
+`V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview artwork is synthetic test material;
 no new shipping raster or multi-PC validation is claimed. Provider and fan-control limits
 remain product facts in PRODUCT.md.
 

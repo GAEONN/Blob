@@ -6,7 +6,7 @@ import sys
 from PIL import Image, ImageDraw
 
 here = os.path.dirname(os.path.abspath(__file__))
-ico = os.path.join(here, "blob.ico")
+ico = os.path.join(here, "blob-v4-glass.ico")
 
 S = 256
 img = Image.new("RGBA", (S, S), (0, 0, 0, 0))

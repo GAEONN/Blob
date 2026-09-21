@@ -1,22 +1,22 @@
 # Blob Dashboard
 
-**v4 host override:** This presentation now runs inside `../unified.py` alongside SmallBlob,
-with one set of controllers and `%LOCALAPPDATA%\Blob-v4` settings. F10/tray commands switch
-views; the shared default lock shortcut is Ctrl+Alt+V. The isolation description below is
-the preserved v3 standalone architecture, not how the v4 entry points launch. See V4-NOTES.md.
+**v4 host:** This presentation runs inside `../unified.py` alongside SmallBlob, with one set of
+controllers and `%LOCALAPPDATA%\Blob-v4` settings. F10/tray commands switch views; the shared
+default lock shortcut is Ctrl+Alt+V. `dashboard/app.pyw` requests this view from the unified
+entry point. See ../V4-NOTES.md.
 
-A separate Windows companion for SmallBlob. The user's pinned model is a car-display /
+The full-screen Windows presentation for SmallBlob. The user's pinned model is a car-display /
 CarPlay-like overview: Music, System temperatures/fans, Sound controls and Gaming data
 are visible simultaneously. It inherits Blob's live refractive glass, normal readable
 type, continuous corners and restrained motion, not a new brand identity.
 
-## Isolation
+## Shared host
 
-The existing parent files are imported read-only. The new entry point is `app.pyw`.
-Dashboard uses its own process, `Local\BlobDashboard` mutex, tray title and
-`%LOCALAPPDATA%\Blob-Dashboard` settings. It does not change SmallBlob code, preferences
-or running instance. The services still read the same Windows media session and hardware;
-audio routing is system-wide, so enabling boost is a system action, not a private mixer.
+Dashboard shares the unified v4 process, `Local\BlobUnified-v4` mutex, tray title,
+`%LOCALAPPDATA%\Blob-v4` settings, media session, hardware monitor and audio controller with
+SmallBlob. The compatibility entry point is `app.pyw`; it requests the Dashboard view and does
+not create a second engine. Audio routing is system-wide, so enabling boost is a system action,
+not a private mixer.
 Boost is off by default. Do not run multiple audio enhancers simultaneously.
 
 ## Behaviors
@@ -27,7 +27,7 @@ Boost is off by default. Do not run multiple audio enhancers simultaneously.
   reuse the existing providers. Apple Music integration still requires its installed app.
 - Live read-only hardware telemetry is provider-dependent; missing sensors remain dashes.
   No universal fan-control promise or firmware writes.
-- Game dock starts click-through. Ctrl+Alt+D toggles its input lock. Its 92-DIP fused
+- Game dock starts click-through. Ctrl+Alt+V toggles its input lock. Its 92-DIP fused
   bubble expands downward into a 92×480-DIP dock, retaining its top-left anchor.
   The satellite expands it; the top chevron collapses it; Blob returns to the overview.
   Expanded dock shows FPS, ms, CPU/GPU temperature and GPU power.

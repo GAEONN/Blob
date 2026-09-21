@@ -1,4 +1,5 @@
 """Gaming must not intercept game input; editing is an explicit, reversible mode."""
+import ctypes
 import unittest
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
@@ -15,6 +16,8 @@ class GamingInputTests(unittest.TestCase):
         a.hwnd, a.cur_arrow = 101, 202
         a.panel = NS(page="gaming", tabs_open=True)
         a.visible, a.gaming_unlocked, a.gaming_modifier_drag = True, False, False
+        a.hotkey_editing = False
+        a.hotkey_swallow = set()
         a.drag, a.slider_drag, a.pressed = (10, 10), None, "tabs"
         a.drag_click, a.drag_origin, a.drag_moved = None, None, False
         a.music_press_active = a.music_hold_fired = a.music_click_pending = False
@@ -56,12 +59,12 @@ class GamingInputTests(unittest.TestCase):
         self.assertTrue(self.app.gaming_locked)
         self.assertFalse(self.app.panel.tabs_open)
 
-    def test_ctrl_alt_temporarily_enables_drag_without_unlocking(self):
+    def test_dual_ctrl_temporarily_enables_drag_without_unlocking(self):
         a = self.app
         a.drag, a.pos, a.captureable = None, [100, 80], False
         a.pinned, a.vel, a.last_frame = False, blob.np.zeros(2), 0
         a.frame = Mock()
-        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk in (0x11, 0x12) else 0
+        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk in (blob.LEFT_CONTROL, blob.RIGHT_CONTROL) else 0
 
         a.update_gaming_modifier_drag()
 
@@ -79,7 +82,7 @@ class GamingInputTests(unittest.TestCase):
         self.assertIsNone(a.drag)
         self.u.ReleaseCapture.assert_called_once()
 
-    def test_releasing_ctrl_alt_restores_click_through(self):
+    def test_releasing_dual_ctrl_restores_click_through(self):
         self.app.gaming_modifier_drag = True
         self.app.drag = (10, 10)
         self.u.GetAsyncKeyState.return_value = 0
@@ -90,6 +93,32 @@ class GamingInputTests(unittest.TestCase):
         self.assertIsNone(self.app.drag)
         self.u.SetWindowLongPtrW.assert_called_once_with(
             101, -20, self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE)
+
+    def test_dual_ctrl_hook_toggles_once_and_works_on_music(self):
+        a = self.app
+        a.panel.page = "music"
+        a.gaming_unlocked = True
+        a.hotkey_editing = False
+        a.dual_control_down = {blob.LEFT_CONTROL: False, blob.RIGHT_CONTROL: False}
+        a.dual_control_latched = False
+
+        def key(vk, down):
+            info = blob.KBDLLHOOKSTRUCT(vk, 0, 0, 0, 0)
+            msg = blob.WM_KEYDOWN if down else 0x101
+            return a._keyboard_hook(0, msg, ctypes.addressof(info))
+
+        key(blob.LEFT_CONTROL, True)
+        self.u.PostMessageW.assert_not_called()
+        key(blob.RIGHT_CONTROL, True)
+        self.u.PostMessageW.assert_called_once_with(101, blob.WM_APP_GAMING_LOCK, 0, 0)
+        key(blob.RIGHT_CONTROL, True)  # repeat: no second toggle
+        self.u.PostMessageW.assert_called_once()
+
+        a.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
+        self.assertFalse(a.overlay_unlocked)
+        key(blob.RIGHT_CONTROL, False)
+        key(blob.RIGHT_CONTROL, True)
+        self.assertEqual(self.u.PostMessageW.call_count, 2)
 
     def test_lock_state_applies_to_non_gaming_views(self):
         self.u.GetWindowLongPtrW.return_value = self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE

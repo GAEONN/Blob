@@ -7,8 +7,8 @@ process and one native window. Tray mode commands or local F10 switch presentati
 recreating audio/media/telemetry controllers. The app uses a single `%LOCALAPPDATA%\Blob-v4`
 profile, isolated from legacy versions. Shared options carry across views; layout state stays
 per-view. Dashboard's game dock starts locked. See [V4-NOTES.md](V4-NOTES.md) for release,
-installation and verification boundaries. The v3 behavior descriptions below apply within
-SmallBlob unless explicitly overridden by this host contract.
+installation and verification boundaries. The SmallBlob behavior descriptions below apply
+within the compact presentation unless explicitly overridden by this host contract.
 
 Blob is a native Windows liquid-glass tray control panel built with Python, OpenGL
 and a layered Win32 window. It combines vendor-neutral read-only hardware monitoring, sound
@@ -85,7 +85,7 @@ Evidence: `blob.pyw`, `gaming.py`, `applemusic.py`, `README.md` and
 PresentMon frames observed, not an end-to-end gameplay FPS test. This documentation
 pass does not assert additional runtime or test results.
 
-## V3 settings, sensor scope and verification
+## Settings, sensor scope and verification
 
 Settings → Appearance → Size selects Regular / Compact. Settings wraps labels and hints into
 variable-height rows, scrolls by complete rows, and gives the shortcut input its own row.
@@ -97,7 +97,7 @@ retained; deduplication uses provider plus sensor ID, so equal labels or RPM do 
 distinct sensors. A stopped fan remains 0 RPM; missing and invalid readings remain unavailable.
 This source contains no fan-control writes; mode choices are monitoring preferences.
 
-V3 evidence: `blob.pyw`, `glass.py`, `reactive.py`, `engine.py`, `V3-NOTES.md` and
-`.impeccable/surfaces/v3.md`. Preview art and telemetry are synthetic test fixtures, not new
+Current v4 evidence: `blob.pyw`, `unified.py`, `glass.py`, `reactive.py`, `engine.py`,
+`V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview art and telemetry are synthetic test fixtures, not new
 shipping assets. Provider fixtures and the reported local ASUS check are not multi-PC testing
 or certification. This documentation reconciliation adds no runtime validation claim.

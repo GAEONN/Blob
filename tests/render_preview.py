@@ -84,7 +84,7 @@ def main(output, gaming=False, errors=False):
              ("Settings / compact", True, "settings", "now", 10, False),
              ("Sound / conflict", False, "sound", "now", 0, True),
              ("Music / mini player", True, "music", "now", 0, False),
-             ("Music / v1 full player", False, "music", "now", 0, False),
+             ("Music / regular full player", False, "music", "now", 0, False),
              ("Music / player bubble", True, "music", "bubble", 0, False),
              ("Artwork / hover controls", True, "music", "art", 0, False),
              ("Artwork / options panel", True, "music", "art", 0, False),
