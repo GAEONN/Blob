@@ -10,7 +10,7 @@ function Show-Result([string]$Name, [bool]$Ready, [string]$Detail) {
 }
 
 $python = Join-Path $InstallRoot '.venv\Scripts\pythonw.exe'
-$blob = Join-Path $InstallRoot 'blob.pyw'
+$blob = Join-Path $InstallRoot 'app.pyw'
 $presentMon = Join-Path $InstallRoot 'tools\PresentMon-2.5.1-x64.exe'
 $sensorExe = Join-Path $InstallRoot 'tools\LibreHardwareMonitor\LibreHardwareMonitor.exe'
 $sensorAuth = Join-Path $InstallRoot 'tools\LibreHardwareMonitor\.blob-http-auth.json'

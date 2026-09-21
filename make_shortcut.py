@@ -18,15 +18,15 @@ d.ellipse((90, 150, 166, 226), fill=(255, 122, 69, 255))
 img.save(ico, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 
 pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-target = os.path.join(here, "blob.pyw")
+target = os.path.join(here, "app.pyw")
 ps = f"""
 $d = [Environment]::GetFolderPath('Desktop')
-$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Blob.lnk'))
+$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Blob v4.lnk'))
 $s.TargetPath = '{pythonw}'
 $s.Arguments = '"{target}"'
 $s.WorkingDirectory = '{here}'
 $s.IconLocation = '{ico}'
-$s.Description = 'Windows hardware, sound, music and gaming overlay'
+$s.Description = 'Blob v4 - SmallBlob and Dashboard in one app (F10 switches views)'
 $s.Save()
 """
 subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)

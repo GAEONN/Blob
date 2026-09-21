@@ -1,3 +1,2 @@
 @echo off
-cd /d "%~dp0"
-start "Blob Dashboard" pythonw "%~dp0dashboard\app.pyw"
+call "%~dp0Launch Blob.cmd" --view dashboard

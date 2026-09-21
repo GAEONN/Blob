@@ -1,7 +1,17 @@
-# Blob
+# Blob v4 — SmallBlob + Dashboard
 
-This checkout is the local **v3** refinement. See [V3-NOTES.md](V3-NOTES.md) for restored
-Music layouts, bubble changes, sensor fixes, verification, and compatibility limits.
+One application, two presentations: the unchanged SmallBlob v3 layouts and the large
+Dashboard showing Music, System, Sound and Gaming together. They share one window, tray,
+audio controller, media session, sensor monitor and settings profile. Switching does not
+restart playback or create another DSP engine. See [V4-NOTES.md](V4-NOTES.md).
+
+Right-click the tray icon → **SmallBlob / Dashboard / Game dock**, or press **F10 while
+Blob is focused** to switch between small and full views. F11 resizes Dashboard only.
+The game dock expands downward and starts click-through. The shared default lock shortcut
+is **Ctrl+Alt+V**, or your migrated v3 shortcut. Do not run older enhancers alongside v4.
+
+Older versions are preserved: `main` is unchanged, and tag **v3.0.0** contains the pre-pairing
+SmallBlob and standalone Dashboard. Version 4 lives on **v4-unified** and **v4.0.0**.
 
 Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
 liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
@@ -14,12 +24,14 @@ It is built with Python, OpenGL, and native Win32 APIs—no browser window and n
 Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/GAEONN/Blob/v4.0.0/install.ps1 | iex
 ```
 
-The installer downloads Blob to `%LOCALAPPDATA%\Programs\Blob`, creates an isolated Python
+The installer downloads this pinned release to `%LOCALAPPDATA%\Programs\Blob-v4`, creates an isolated Python
 environment, installs the required packages, creates shortcuts, verifies the installation, and
-launches the app. Re-running the same command updates or repairs the installation.
+launches the app. It creates **Blob v4** on the Desktop without replacing older shortcuts.
+Preferences live in `%LOCALAPPDATA%\Blob-v4`; first launch copies v3 preferences without
+editing the original and leaves audio boost off. Re-running repairs this v4 installation.
 
 One administrator prompt may be required for optional system integrations:
 
@@ -44,21 +56,22 @@ Windows metrics remain usable while optional integrations are unavailable.
 | **Gaming** | Always-on-top FPS, frame time, temperatures, utilization, memory, fan, and GPU-power strip |
 | **Settings** | Startup, capture visibility, pointer style, overlay lock shortcut, and per-feature options |
 
-Blob uses contextual forms instead of one universal compact/regular switch. Each view becomes the
-shape that best fits the task: a hardware mode bubble, horizontal music player, album-art view,
-music bubble, or slim gaming strip.
+SmallBlob retains Settings → Appearance → Size → Regular / Compact, as well as its System,
+Music and Gaming bubbles, square album-art view, and gaming strip. Dashboard adds the
+simultaneous overview and a slim, downward-expanding left game dock.
 
 ## Everyday controls
 
 - Click Blob's tray icon to show or hide the interface.
 - Drag the normal card or an empty area to pin it anywhere.
 - Press `Esc` to dismiss the current expanded Music view, then dismiss Blob.
-- Press `Ctrl+Alt+G` to lock or unlock the entire overlay. The shortcut is editable in Settings.
+- Press `Ctrl+Alt+V` (or your migrated shortcut) to lock/unlock SmallBlob or the game dock.
+  The shortcut is editable in Settings; the full Dashboard cannot be made click-through.
 - Locked mode passes pointer input through Blob on every view.
 - Enable **Include Blob in screenshots and recordings** in Settings when capture visibility matters.
 
-Blob starts unlocked and keeps that state when changing views, entering Gaming, or reopening the
-interface. Only the configured shortcut or tray command changes it.
+SmallBlob keeps its existing tab behavior. The detached game dock starts locked; returning
+from Dashboard to SmallBlob's Gaming view also starts locked to protect game input.
 
 ## Hardware without an OEM lock-in
 
@@ -141,7 +154,7 @@ avoid recursive self-capture.
 Clone the repository and run the installer locally:
 
 ```powershell
-git clone https://github.com/GAEONN/Blob.git
+git clone --branch v4.0.0 https://github.com/GAEONN/Blob.git
 cd Blob
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
@@ -157,7 +170,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 To start an installed checkout manually, use `Launch Blob.cmd`, the desktop shortcut, or:
 
 ```powershell
-.\.venv\Scripts\pythonw.exe .\blob.pyw
+.\.venv\Scripts\pythonw.exe .\app.pyw
 ```
 
 ## Requirements
@@ -169,11 +182,12 @@ To start an installed checkout manually, use `Launch Blob.cmd`, the desktop shor
 
 ## Development
 
-Install the Python dependencies into a virtual environment, then launch `blob.pyw`. Run the offline
+Install the Python dependencies into a virtual environment, then launch `app.pyw`. Run the offline
 regression suite with:
 
 ```powershell
 python -m unittest discover -s tests -v
+python -m unittest discover -s dashboard -p test_dashboard.py -v
 ```
 
 Render the real GPU glass against a synthetic desktop for visual inspection:
@@ -186,6 +200,8 @@ Key files:
 
 | File | Responsibility |
 | --- | --- |
+| [`unified.py`](unified.py) | Single-instance host, shared controllers, view switching, v4 settings |
+| [`dashboard/dashboard.py`](dashboard/dashboard.py) | Full overview and downward-expanding gaming dock |
 | [`blob.pyw`](blob.pyw) | Window lifecycle, layout, animation, input, and view behavior |
 | [`glass.py`](glass.py) | Desktop capture, signed-distance shader, refraction, and layered-window output |
 | [`engine.py`](engine.py) | Vendor-neutral Windows monitoring and optional sensor providers |

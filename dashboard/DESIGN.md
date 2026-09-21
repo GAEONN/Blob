@@ -8,6 +8,11 @@ colors:
 
 # Design System: Blob Dashboard
 
+v4 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
+shared settings/controllers and a mode-dependent shader anchor. The historical standalone
+isolation and Ctrl+Alt+D descriptions below are superseded by the v4 profile and shared
+Ctrl+Alt+V shortcut (or migrated custom binding); see ../V4-NOTES.md.
+
 ## Overview
 
 This ordinary extension inherits [Blob's Liquid Glass system](../DESIGN.md): live refractive glass, continuous corners, filled transport and restrained springs. It establishes no new identity. The parent remains read-only; the local rules below describe Dashboard components, not replacements for SmallBlob's rules. This native addendum has no web sidecar.

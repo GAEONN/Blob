@@ -2824,18 +2824,6 @@ class App:
 
 
 if __name__ == "__main__":
-    # Importing the layout for tests must not acquire the live app's single-instance lock.
-    k32.CreateMutexW.restype = wintypes.HANDLE
-    _mutex = k32.CreateMutexW(None, False, "Local\\BlobTrayApp-v3")
-    if k32.GetLastError() == 183:
-        sys.exit(0)
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except OSError:
-        pass
-    try:
-        App().run()
-    except Exception:
-        import traceback
-        engine.log("fatal: " + traceback.format_exc())
-        raise
+    # Keep the familiar script path; v4 has one application host for both views.
+    from unified import main
+    main()

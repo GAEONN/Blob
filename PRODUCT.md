@@ -1,5 +1,15 @@
 # Blob
 
+## v4 application host
+
+`app.pyw` / `unified.py` pair the SmallBlob layouts below with the full Dashboard in one
+process and one native window. Tray mode commands or local F10 switch presentations without
+recreating audio/media/telemetry controllers. The app uses a single `%LOCALAPPDATA%\Blob-v4`
+profile, isolated from legacy versions. Shared options carry across views; layout state stays
+per-view. Dashboard's game dock starts locked. See [V4-NOTES.md](V4-NOTES.md) for release,
+installation and verification boundaries. The v3 behavior descriptions below apply within
+SmallBlob unless explicitly overridden by this host contract.
+
 Blob is a native Windows liquid-glass tray control panel built with Python, OpenGL
 and a layered Win32 window. It combines vendor-neutral read-only hardware monitoring, sound
 enhancement and music controls. Hardware support varies by sensor/provider. Music controls work

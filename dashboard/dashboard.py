@@ -282,7 +282,7 @@ class DashboardPanel(BasePanel):
         self.button('hotkey:overlay','Press a shortcut…' if self.hotkey_editing else self.hotkey_label,
                     (x0+20*S,y0+402*S,x1-20*S,y0+438*S),True)
         self.label(x0+20*S,y0+455*S,self.fit(self.hotkey_error or 'Click to change shortcut',11,'Regular',x1-x0-40*S),11,'Regular',205)
-        self.label(x0+20*S,y1-32*S,'SmallBlob settings stay separate.',11,'Regular',210)
+        self.label(x0+20*S,y1-32*S,getattr(self,'settings_note','SmallBlob settings stay separate.'),11,'Regular',210)
 
 
 class DashboardRenderer(BaseRenderer):

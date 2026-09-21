@@ -8,4 +8,4 @@ if not exist ".venv\Scripts\pythonw.exe" (
     exit /b %ERRORLEVEL%
 )
 
-start "" /D "%~dp0" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0blob.pyw"
+start "" /D "%~dp0" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0app.pyw" %*

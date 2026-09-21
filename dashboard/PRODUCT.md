@@ -1,5 +1,10 @@
 # Blob Dashboard
 
+**v4 host override:** This presentation now runs inside `../unified.py` alongside SmallBlob,
+with one set of controllers and `%LOCALAPPDATA%\Blob-v4` settings. F10/tray commands switch
+views; the shared default lock shortcut is Ctrl+Alt+V. The isolation description below is
+the preserved v3 standalone architecture, not how the v4 entry points launch. See V4-NOTES.md.
+
 A separate Windows companion for SmallBlob. The user's pinned model is a car-display /
 CarPlay-like overview: Music, System temperatures/fans, Sound controls and Gaming data
 are visible simultaneously. It inherits Blob's live refractive glass, normal readable
