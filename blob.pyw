@@ -1289,9 +1289,10 @@ class Panel:
             ("toggle", "startup", "Start with Windows", startup, None),
         ]
         rows[rows.index(("head", "Hardware")):rows.index(("head", "Hardware"))] = [
-            ("head", "Gaming"),
+            ("head", "Overlay"),
+            ("note", "overlay_info", "One lock state is shared by every tab and only changes when you use the shortcut or tray command.", None, None),
             ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
-            ("note", "gaming_tip", f"Gaming is click-through while locked. Hold the shortcut modifiers to drag temporarily, or use {self.hotkey_label} to unlock Gaming or either bubble.", None, None),
+            ("note", "gaming_tip", f"Blob stays unlocked across tabs until you use {self.hotkey_label} to lock it. While locked it passes clicks through; in Gaming, hold the shortcut modifiers to drag temporarily.", None, None),
             ("keybind", "overlay", "Overlay lock shortcut", self.hotkey_label,
              self.hotkey_error or "Click the shortcut, then press a modified key combination"),
         ]
@@ -1436,8 +1437,7 @@ class App:
         self.music_top = self.glass.panel_y(round((Panel.TOP + 118) * self.S))
         self.controls, self.old_controls = [], []
         self.visible = self.pinned = False
-        self.gaming_unlocked = False
-        self.bubble_unlocked = False
+        self._overlay_unlocked = True
         self.gaming_modifier_drag = False
         self.hotkey_editing = False
         self.hotkey_swallow = set()
@@ -1606,8 +1606,6 @@ class App:
         cfg["hardware_view"] = view
         engine.save_config(cfg)
         self.panel.hardware_view = view
-        if view != "bubble":
-            self.bubble_unlocked = False
         self.panel.tabs_open = False
         self.panel.tabs_t = 0.0
         self.old_page_springs()
@@ -1718,7 +1716,11 @@ class App:
     # ── visibility ──
     @property
     def gaming_locked(self):
-        return self.panel.page == "gaming" and not self.gaming_unlocked
+        return self.panel.page == "gaming" and not self.overlay_unlocked
+
+    @property
+    def overlay_locked(self):
+        return self.visible and not self.overlay_unlocked
 
     @property
     def gaming_drag_active(self):
@@ -1731,16 +1733,32 @@ class App:
 
     @property
     def bubble_drag_active(self):
-        return self.visible and self.bubble_mode and self.bubble_unlocked
+        return self.visible and self.bubble_mode and self.overlay_unlocked
 
     @property
     def overlay_lock_available(self):
-        return self.panel.page == "gaming" or self.bubble_mode
+        return True
 
     @property
     def overlay_unlocked(self):
-        return self.gaming_unlocked if self.panel.page == "gaming" else (
-            self.bubble_unlocked if self.bubble_mode else False)
+        return getattr(self, "_overlay_unlocked", True)
+
+    # Compatibility aliases for older integrations; all views now share one state.
+    @property
+    def gaming_unlocked(self):
+        return self.overlay_unlocked
+
+    @gaming_unlocked.setter
+    def gaming_unlocked(self, value):
+        self._overlay_unlocked = bool(value)
+
+    @property
+    def bubble_unlocked(self):
+        return self.overlay_unlocked
+
+    @bubble_unlocked.setter
+    def bubble_unlocked(self, value):
+        self._overlay_unlocked = bool(value)
 
     def hotkey_modifiers_held(self):
         mods = getattr(self, "hotkey_mods", DEFAULT_HOTKEY[0])
@@ -1764,11 +1782,11 @@ class App:
         desired = style & ~(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)
         if self.panel.page == "gaming":
             desired |= WS_EX_NOACTIVATE
-            if self.gaming_locked and not self.gaming_modifier_drag:
-                desired |= WS_EX_TRANSPARENT
+        if self.overlay_locked and not self.gaming_drag_active:
+            desired |= WS_EX_TRANSPARENT
         if desired != style:
             user32.SetWindowLongPtrW(self.hwnd, -20, desired)
-        if self.gaming_locked and not self.gaming_modifier_drag:
+        if self.overlay_locked and not self.gaming_drag_active:
             self.drag = self.slider_drag = self.pressed = None
             self.drag_click = self.drag_origin = None
             self.drag_moved = False
@@ -1780,25 +1798,19 @@ class App:
             user32.SetCursor(self.cur_arrow)
 
     def toggle_gaming_input(self):
-        if not self.visible or self.panel.page != "gaming":
-            return
-        self.gaming_unlocked = not self.gaming_unlocked
-        self.gaming_modifier_drag = False
-        self.apply_gaming_input()
-        # Expanded navigation makes edit mode obvious and provides a way out.
-        self.panel.tabs_open = self.gaming_unlocked
-        self.frame_dirty = True
-        self.icon.update_menu()
+        self.toggle_overlay_input()
 
     def toggle_overlay_input(self):
         if not self.visible:
             return
+        self._overlay_unlocked = not self.overlay_unlocked
+        self.gaming_modifier_drag = False
+        # Expanded navigation makes edit mode obvious and provides a way out.
         if self.panel.page == "gaming":
-            self.toggle_gaming_input()
-        elif self.bubble_mode:
-            self.bubble_unlocked = not self.bubble_unlocked
-            self.frame_dirty = True
-            self.icon.update_menu()
+            self.panel.tabs_open = self.overlay_unlocked
+        self.apply_gaming_input()
+        self.frame_dirty = True
+        self.icon.update_menu()
 
     def begin_hotkey_edit(self):
         self.hotkey_editing = not self.hotkey_editing
@@ -1852,8 +1864,6 @@ class App:
         self.snap = self.mon.snapshot() or self.snap or empty_snapshot()
         self.visible = True
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
-        self.gaming_unlocked = False
-        self.bubble_unlocked = False
         self.gaming_modifier_drag = False
         self.apply_gaming_input()
         self.draw_content()
@@ -1870,15 +1880,13 @@ class App:
         if self.captureable:
             self.refresh_backdrop()
         self.frame()
-        user32.ShowWindow(self.hwnd, 4 if self.panel.page == "gaming" else 5)
-        if self.panel.page != "gaming":
+        user32.ShowWindow(self.hwnd, 4 if self.panel.page == "gaming" or self.overlay_locked else 5)
+        if self.panel.page != "gaming" and self.overlay_unlocked:
             user32.SetForegroundWindow(self.hwnd)
         self.maintain_gaming_topmost()
         self._schedule()
 
     def hide(self):
-        self.gaming_unlocked = False
-        self.bubble_unlocked = False
         self.gaming_modifier_drag = False
         self.hotkey_editing = self.panel.hotkey_editing = False
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
@@ -2234,8 +2242,6 @@ class App:
                 self.old_page_springs()
                 self.panel.page = key
                 self.panel.music_menu = None
-                self.gaming_unlocked = False
-                self.bubble_unlocked = False
                 self.apply_gaming_input()
                 self.panel.update_width()
                 if key == "gaming":
@@ -2374,7 +2380,7 @@ class App:
                     return 1
                 if 0x200 <= msg <= 0x20E:
                     return 0
-            elif self.gaming_locked:
+            elif self.overlay_locked:
                 if msg == 0x84:  # WM_NCHITTEST; the layered style is the cross-process protection
                     return -1  # HTTRANSPARENT
                 if 0x200 <= msg <= 0x20E or msg == WM_SETCURSOR:

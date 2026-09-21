@@ -16,8 +16,8 @@ Windows app is already installed.
   cycles the four quick modes and the attached satellite restores the full interface. Mode choices
   persist, but are explicitly described as monitoring-only until a real fan-profile backend is
   connected; Blob never pretends that a firmware or pump setting changed.
-- The top-right anchor stays fixed during the morph. Bubble placement is locked by default and
-  becomes draggable through the same user-editable overlay shortcut used by Gaming.
+- The top-right anchor stays fixed during the morph. Bubble placement follows Blob's shared global
+  lock state and is draggable whenever the overlay is unlocked.
 
 ## Music card and player bubble
 
@@ -30,7 +30,13 @@ Windows app is already installed.
 - The player bubble breathes subtly with the live audio spectrum. Its main lobe supports tap to
   play or pause, double-tap for next, and hold for previous; its attached satellite restores the
   Music card. Playback comes from the current Windows media session and remains service-neutral.
-  The shared overlay shortcut unlocks the bubble for dragging and relocks it for transport gestures.
+  The shared overlay shortcut controls the same lock state on every tab.
+
+## Shared overlay lock
+
+- Blob starts unlocked. Tab changes, entering Gaming, hiding and reopening do not mutate that state.
+- The configured bind and tray command are the authoritative lock toggle. Locking makes every view
+  click-through; unlocking restores normal controls and bubble dragging.
 
 ## Gaming and queue extension
 

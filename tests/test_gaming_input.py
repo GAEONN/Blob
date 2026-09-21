@@ -91,9 +91,15 @@ class GamingInputTests(unittest.TestCase):
         self.u.SetWindowLongPtrW.assert_called_once_with(
             101, -20, self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE)
 
-    def test_other_views_regain_normal_input(self):
+    def test_lock_state_applies_to_non_gaming_views(self):
         self.u.GetWindowLongPtrW.return_value = self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE
         self.app.panel.page = "music"
+        self.app.apply_gaming_input()
+        self.u.SetWindowLongPtrW.assert_called_once_with(
+            101, -20, self.base | blob.WS_EX_TRANSPARENT)
+        self.u.SetWindowLongPtrW.reset_mock()
+        self.u.GetWindowLongPtrW.return_value = self.base | blob.WS_EX_TRANSPARENT
+        self.app.gaming_unlocked = True
         self.app.apply_gaming_input()
         self.u.SetWindowLongPtrW.assert_called_once_with(101, -20, self.base)
 
@@ -108,17 +114,37 @@ class GamingInputTests(unittest.TestCase):
         self.u.SetCursor.assert_not_called()
         self.assertEqual(self.app.wndproc(101, 0x84, 0, 0), -1)
 
-    def test_hotkey_and_tray_use_same_toggle_and_ignore_other_views(self):
+    def test_hotkey_and_tray_toggle_one_state_on_every_view(self):
         self.app.wndproc(101, blob.WM_HOTKEY, blob.GAMING_HOTKEY, 0)
         self.assertTrue(self.app.gaming_unlocked)
         self.app.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
         self.assertFalse(self.app.gaming_unlocked)
         self.app.panel.page = "sound"
         self.app.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
-        self.assertFalse(self.app.gaming_unlocked)
+        self.assertTrue(self.app.gaming_unlocked)
         self.app.panel.page, self.app.visible = "gaming", False
         self.app.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
-        self.assertFalse(self.app.gaming_unlocked)
+        self.assertTrue(self.app.gaming_unlocked)
+
+    def test_tab_changes_preserve_global_lock_state(self):
+        a = self.app
+        a.panel = NS(page="blob", music_menu=None, tabs_open=False, tabs_t=0,
+                     update_width=Mock())
+        a.gaming_unlocked = True
+        a.glass = NS(set_ambient=Mock())
+        a.media = NS(art=None)
+        a.media_seen = None
+        a.old_page_springs = a.apply_gaming_input = Mock()
+        a.springs = {}
+        a.sound = NS(refresh_devices=Mock())
+        a.draw_content = a.frame = a._schedule = Mock()
+        with patch.object(blob, "startup_enabled", return_value=False):
+            a.click("page:gaming", 0)
+            self.assertTrue(a.overlay_unlocked)
+            a.toggle_overlay_input()
+            self.assertTrue(a.overlay_locked)
+            a.click("page:sound", 0)
+            self.assertTrue(a.overlay_locked)
 
     def test_same_hotkey_unlocks_hardware_bubble_for_dragging(self):
         a = self.app
@@ -210,14 +236,15 @@ class GamingInputTests(unittest.TestCase):
         self.app.wndproc(101, blob.WM_APP_REFOCUS, 0, 0)
         self.u.SetForegroundWindow.assert_called_once_with(101)
 
-    def test_show_gaming_relocks_without_requesting_focus(self):
+    def test_show_gaming_preserves_unlock_without_requesting_focus(self):
         a = self.app
         a.gaming_unlocked, a.pinned, a.captureable = True, True, False
         a.mon, a.draw_content, a.frame, a._schedule = Mock(), Mock(), Mock(), Mock()
         a.snap, a.pos = {}, [10, 10]
         a.springs = {"height": NS(x=0, target=86)}
         a.show()
-        self.assertTrue(a.gaming_locked)
+        self.assertFalse(a.gaming_locked)
+        self.assertTrue(a.overlay_unlocked)
         self.u.ShowWindow.assert_called_once_with(101, 4)
         self.u.SetForegroundWindow.assert_not_called()
 

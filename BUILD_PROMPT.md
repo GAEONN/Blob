@@ -168,8 +168,7 @@ every COM/device call on a worker thread.
   seek target, then spring the mini player continuously into an audio-reactive fused bubble anchored
   at that corner. The main lobe uses tap for play/pause, double-tap for next and hold for previous;
   the attached satellite restores the mini player. Add the gesture legend to Music settings rather
-  than labelling the bubble itself. The shared overlay shortcut unlocks either bubble for dragging;
-  relocking the Music bubble restores its transport gestures.
+  than labelling the bubble itself. Bubble dragging follows the global overlay lock state.
 * In Music card and cover modes, flank the default previous/play-next row with Volume and Options.
   Volume swaps the middle row for the system-volume slider; Options swaps it for Search, Playing
   Next, Shuffle and Repeat. Keep the two edge anchors visible while either inline utility is open.
@@ -177,13 +176,16 @@ every COM/device call on a worker thread.
   layout. Its card affordance is one unmarked glass circle. The card's width, height, crossfaded
   content and signed-distance silhouette must spring continuously into the bubble, which is the
   smooth union of a large cycle target and a smaller restore satellite.
-  Preserve the card's top-right anchor during that morph. Bubble placement starts locked and becomes
-  draggable through the same configurable overlay shortcut as Gaming. Settings must include a
+  Preserve the card's top-right anchor during that morph. Bubble placement follows the shared
+  overlay lock state. Settings must include a
   click-to-record modified-key editor for that binding.
   Its body cycles Auto → Quiet → Balanced → Turbo; Custom stays on the full card. The card
   exposes a five-mode selector and a single chevron for the bounded, scrollable sensor inventory.
 * **The view switcher rests as a small pill** with the current view's name and springs open into the
   five options when the pointer reaches it.
+* **Lock is global and explicit.** Blob starts unlocked. Entering Gaming, switching views and
+  hide/show cycles must preserve the current state. Only the configured bind or tray action toggles
+  it; locked makes the entire overlay click-through and unlocked restores controls and dragging.
 * **Settings** grouped by area (Appearance, Music, Sound, Hardware, System), scrollable with the wheel,
   with a switch for every customization, including one that makes the pane visible to screen
   recorders (which necessarily freezes the glass).

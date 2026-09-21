@@ -43,8 +43,8 @@ preferences while clearly marking them as monitoring-only until a fan-profile ba
 Its single-circle corner control smoothly contracts and reshapes the card into a fused glass mode
 bubble: clicking the body cycles the four quick modes, while the attached satellite restores the
 full card. The card's top-right remains fixed during the morph so the circle feels like the bubble's
-physical origin. Bubble placement opens locked; use the same editable overlay shortcut as Gaming
-to unlock and drag it. Expanding the card's chevron
+physical origin. Bubble placement follows Blob's shared lock state; while Blob is unlocked it can
+be dragged immediately. Expanding the card's chevron
 shows every discovered fan RPM plus CPU/GPU load, clocks and power, storage, memory and battery.
 The tray icon shows the CPU temperature when one is available.
 
@@ -74,8 +74,8 @@ The mini player's unmarked corner circle morphs the card into a small audio-reac
 anchored to the card's top-right corner. Tap the large lobe to play or pause, double-tap it for the
 next track, or hold it for the previous track. Select the small attached lobe to restore the card.
 These controls use the active Windows media session, so they are not tied to Apple Music. The same
-editable overlay shortcut as Gaming unlocks either bubble for dragging; lock it again to use the
-Music gestures.
+editable overlay shortcut controls one shared lock state for every tab. While unlocked, either
+bubble can be dragged; lock Blob to pass pointer input through the overlay.
 
 Settings also holds **Include Blob in screenshots and recordings**. Off (the default) keeps the
 pane invisible to capture so the glass can refract live. On makes it visible to capture tools, at
@@ -165,13 +165,14 @@ the rest of the app usable while sensors are discovered and names the optional p
 
 Choose **Gaming** in Blob's view switcher for a draggable, always-on-top glass strip:
 FPS, frame time, CPU/GPU temperatures and utilization, RAM, fan RPM, and GPU power.
-Gaming opens **locked and click-through**: mouse clicks go to the game, not Blob.
-With the default shortcut, hold **Ctrl+Alt** and drag anywhere on the strip to reposition it without
-unlocking. Press **Ctrl+Alt+G** to unlock/relock Gaming or the Hardware bubble, or use the tray's
+Blob starts **unlocked** and keeps that state when changing tabs, including Gaming. Press
+**Ctrl+Alt+G** to lock/unlock the whole overlay, or use the tray's
 **Unlock overlay / Lock overlay** command. Change this binding under Settings → Gaming by clicking
 the shortcut and pressing a new modified key combination.
-Unlocking expands navigation; drag a gap to reposition, then lock before playing.
-Reopening Gaming locks it again. The overlay never requests foreground focus in Gaming.
+When locked, mouse clicks pass through Blob on every tab. In Gaming, the shortcut modifiers can
+still be held to drag temporarily without changing the global lock state. Unlocking Gaming expands
+navigation; drag a gap to reposition, then lock before playing. Hiding, reopening, or changing tabs
+never changes the state—the bind is authoritative. Gaming never requests foreground focus.
 This uses Windows' [layered-window input transparency](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows),
 not just a no-activation mouse handler. Use windowed or borderless
 games; an ordinary desktop overlay cannot promise visibility in exclusive fullscreen.
