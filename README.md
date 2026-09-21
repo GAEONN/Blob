@@ -1,239 +1,209 @@
 # Blob
 
-A liquid-glass control panel for Windows laptops. One small pane, drawn entirely by a GPU shader,
-that refracts the live desktop behind it — video, games, anything — and holds three things:
+Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
+liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
+strip into one interface.
 
-* **Hardware** — CPU/GPU load, memory, battery, storage temperatures and optional read-only temperature/fan sensors on Windows PCs.
-* **Sound** — a system-wide audio enhancer: boost, EQ, bass, clarity and surround, with a glass spectrum.
-* **Music** — a real Apple Music player: now playing, catalog search, your playlists.
+It is built with Python, OpenGL, and native Win32 APIs—no browser window and no Electron runtime.
 
-No browser, no Electron. Python, OpenGL, and a layered Win32 window.
+## Install
 
-## Why it looks like that
-
-The pane is not a blurred screenshot. Every frame it captures the screen behind itself with DXGI
-Desktop Duplication and refracts it in a single fragment shader: edge displacement from a signed
-distance field, colour dispersion, frosted blur, specular rim, and a shadow — all analytic, so any
-shape can move or morph for free.
-
-Two details do most of the work:
-
-* **Squircles, not rounded rectangles.** Corners use Apple's continuous curvature (the
-  figma-squircle construction at 60 % smoothing on the CPU, a superellipse in the shader), and
-  nested shapes follow `inner radius = outer radius − inset`.
-* **Per-pixel adaptive ink.** Text colour is decided pixel by pixel from a blurred read of the
-  scenery behind it, so one pane can sit half over a white page and half over a black one and stay
-  readable in both halves.
-
-Controls are springs, not tweens: the selected pill slides and stretches, knobs swell when grabbed,
-pages morph to their new height while the content crossfades. The mouse pointer becomes a glass
-dart that fuses into whatever it hovers, stretches a neck when pulled away, and snaps free.
-
-[`DESIGN.md`](DESIGN.md) is the full specification — the shader maths, every spring constant, and
-the traps involved in building this kind of window.
-
-## What each page does
-
-**Hardware.** Load, memory, battery, adapters, ACPI thermal zones and NVMe temperatures come from
-Windows. CPU/GPU temperatures and fan RPM have no vendor-neutral Windows API, so Blob reads them
-from LibreHardwareMonitor/OpenHardwareMonitor or HWiNFO when one is running. NVIDIA NVML adds
-power and clock data where available. Monitoring is read-only: Blob does not change firmware fan
-curves or power profiles. The Hardware card offers Auto, Quiet, Balanced, Turbo and Custom
-preferences while clearly marking them as monitoring-only until a fan-profile backend is connected.
-Its single-circle corner control smoothly contracts and reshapes the card into a fused glass mode
-bubble: clicking the body cycles the four quick modes, while the attached satellite restores the
-full card. The card's top-right remains fixed during the morph so the circle feels like the bubble's
-physical origin. Bubble placement follows Blob's shared lock state; while Blob is unlocked it can
-be dragged immediately. Expanding the card's chevron
-shows every discovered fan RPM plus CPU/GPU load, clocks and power, storage, memory and battery.
-The tray icon shows the CPU temperature when one is available.
-
-**Sound.** Windows plays into a virtual cable; a separate process reads it back, runs EQ → bass →
-clarity → stereo width → loudness compressor → look-ahead limiter, and plays the result on the real
-output device, which is held at 100 % while your volume slider moves to the cable (the same trick
-FxSound uses). Measured about +12 dB of perceived loudness at full boost on already-loud material,
-with peaks still capped at −0.5 dBFS. The audio runs in its own process so the interface can never
-stutter it.
-
-**Music.** Now-playing comes from Windows' media session API, so it also works with Spotify or a
-browser tab. Apple Music gets direct control: catalog search through Apple's public search endpoint,
-and playback by driving the real Apple Music app through UI Automation while its window is kept
-invisible. Resting the pointer on a result preloads it, which brings a click down to about 1.4 s.
-
-## Sizes and the pointer
-
-Each page now chooses the form that fits its job instead of exposing a universal C/R switch. Music
-opens as an Apple Music-inspired horizontal mini player. Hovering its cover reveals the expand
-affordance; selecting it grows into a cover-first view. Hover the expanded cover to reveal metadata,
-timeline, transport and the collapse control that returns to the mini player. Both forms keep a
-Volume button at the left of transport and an Options button at the right. Volume replaces the
-middle row with an inline system-volume slider; Options exposes Search, Playing Next, Shuffle and
-Repeat without crowding the default transport.
-
-The mini player's unmarked corner circle morphs the card into an audio-reactive player bubble:
-bass expands the main body, mids flex the liquid neck, and treble animates the restore satellite.
-The response is spring-smoothed and bounded so the bubble never escapes its stable hit targets.
-The equalizer control in Music Options—or **Reactive music bubble** in Settings—toggles it. A
-lightweight Windows meter watches every active playback endpoint, keeping amplitude response working
-when Blob's optional Sound enhancement is off or an app is routed away from the default device; the
-routed Sound spectrum provides true frequency-band detail when available.
-The bubble is
-anchored to the card's top-right corner. Tap the large lobe to play or pause, double-tap it for the
-next track, or hold it for the previous track. Click the small attached lobe to restore the card, or
-drag that satellite to reposition the bubble.
-These controls use the active Windows media session, so they are not tied to Apple Music. The same
-editable overlay shortcut controls one shared lock state for every tab. While unlocked, Hardware's
-body and Music's satellite are drag surfaces; lock Blob to pass pointer input through the overlay.
-
-Settings also holds **Include Blob in screenshots and recordings**. Off (the default) keeps the
-pane invisible to capture so the glass can refract live. On makes it visible to capture tools, at
-the cost of freezing the glass to the backdrop captured when it appeared, since it would otherwise
-refract itself.
-
-## Hardware compatibility
-
-Blob is designed for Windows 11 PCs, not a particular laptop brand. Core load, memory, battery,
-storage, Sound, Music and glass features work without an OEM utility. Optional sensor coverage is:
-
-| Data | Source |
-| --- | --- |
-| CPU/GPU load | Windows performance counters on Intel, AMD and NVIDIA systems |
-| CPU/GPU temperature and fan RPM | LibreHardwareMonitor/OpenHardwareMonitor or HWiNFO shared memory |
-| NVIDIA temperature, power and clock | NVML, when available |
-| NVMe temperatures | Windows storage IOCTL |
-
-The full installer provisions LibreHardwareMonitor as Blob's sensor provider and starts it minimized
-through an elevated logon task, so it can read supported sensors without showing a UAC prompt on
-every launch. Blob also detects these providers when the user already runs one:
-
-* [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) — read over WMI, nothing to configure.
-* [HWiNFO](https://www.hwinfo.com/) — read from its shared memory; switch on *Settings → Shared Memory Support*.
-
-CPUID **HWMonitor** is not usable: it shows sensors but offers nothing for other programs to read.
-The Settings page names whichever source Blob ended up using.
-
-## Requirements
-
-* Windows 11, a GPU with OpenGL 3.3
-* Python 3.10–3.13 (the installer creates an isolated environment)
-* Administrator approval for the optional sensor and audio drivers
-
-Fresh install or update, including Python when needed, dependencies, the FPS helper,
-LibreHardwareMonitor/PawnIO sensors, VB-CABLE audio, desktop shortcut, verification and launch:
+Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/alonsoglunac-debug/Blob/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
 ```
 
-From an existing checkout:
+The installer downloads Blob to `%LOCALAPPDATA%\Programs\Blob`, creates an isolated Python
+environment, installs the required packages, creates shortcuts, verifies the installation, and
+launches the app. Re-running the same command updates or repairs the installation.
+
+One administrator prompt may be required for optional system integrations:
+
+- **LibreHardwareMonitor + PawnIO** for broader temperature and fan-sensor coverage.
+- **PresentMon** and Performance Log Users membership for real FPS/frame-time capture.
+- **VB-CABLE** for Blob's optional system-wide sound processing.
+
+After a fresh full installation, sign out and back in once for FPS permission changes. Restart
+Windows once if the VB-CABLE driver was installed. Blob itself, media controls, and the standard
+Windows metrics remain usable while optional integrations are unavailable.
+
+> Review [`install.ps1`](install.ps1) before running the one-line installer if you prefer to inspect
+> remote scripts before execution.
+
+## What Blob includes
+
+| View | Purpose |
+| --- | --- |
+| **Hardware** | CPU/GPU temperatures and utilization, memory, storage, battery, fan RPM, clocks, and power when available |
+| **Sound** | System-wide boost, equalization, bass, clarity, stereo width, limiter, and spectrum visualization |
+| **Music** | Service-neutral Windows now-playing controls, artwork, timeline, queue tools, and an audio-reactive bubble |
+| **Gaming** | Always-on-top FPS, frame time, temperatures, utilization, memory, fan, and GPU-power strip |
+| **Settings** | Startup, capture visibility, pointer style, overlay lock shortcut, and per-feature options |
+
+Blob uses contextual forms instead of one universal compact/regular switch. Each view becomes the
+shape that best fits the task: a hardware mode bubble, horizontal music player, album-art view,
+music bubble, or slim gaming strip.
+
+## Everyday controls
+
+- Click Blob's tray icon to show or hide the interface.
+- Drag the normal card or an empty area to pin it anywhere.
+- Press `Esc` to dismiss the current expanded Music view, then dismiss Blob.
+- Press `Ctrl+Alt+G` to lock or unlock the entire overlay. The shortcut is editable in Settings.
+- Locked mode passes pointer input through Blob on every view.
+- Enable **Include Blob in screenshots and recordings** in Settings when capture visibility matters.
+
+Blob starts unlocked and keeps that state when changing views, entering Gaming, or reopening the
+interface. Only the configured shortcut or tray command changes it.
+
+## Hardware without an OEM lock-in
+
+Blob is designed for Windows PCs rather than a particular laptop manufacturer. Standard load,
+memory, adapter, battery, and storage information comes from Windows. Additional sensor data is
+read from whichever supported provider is available.
+
+| Measurement | Source |
+| --- | --- |
+| CPU/GPU utilization | Windows performance counters |
+| Memory, battery, adapters | Windows APIs |
+| NVMe temperatures | Windows storage IOCTL |
+| CPU/GPU temperatures and fan RPM | LibreHardwareMonitor, OpenHardwareMonitor, or HWiNFO shared memory |
+| NVIDIA temperature, clock, and power | NVML when present |
+
+Sensor availability depends on the motherboard, controller, firmware, and provider support. Windows
+does not expose a universal temperature or fan-control API. Blob therefore treats its Auto, Quiet,
+Balanced, Turbo, and Custom choices as monitoring preferences unless a real hardware backend reports
+that it can apply them; it never pretends a firmware fan curve changed.
+
+The Hardware bubble behaves like this:
+
+- Click the main body to cycle Auto → Quiet → Balanced → Turbo.
+- Click the satellite to return to the full Hardware card.
+- While Blob is unlocked, click-drag the bubble to reposition it.
+
+## Music that is not tied to Apple Music
+
+Blob reads the active Windows media session, so now-playing information and transport controls work
+with Spotify, YouTube, browsers, Apple Music, and other compatible players. Apple Music installation
+is optional; when present, Blob can additionally expose its catalog search and Playing Next data.
+
+The Music card includes artwork, metadata, seeking, previous/play/next, volume, and an Options panel.
+Its corner circle morphs into a two-lobe player bubble:
+
+- Tap the main lobe to play or pause.
+- Double-tap the main lobe to skip to the next track.
+- Hold the main lobe to return to the previous track.
+- Click the satellite to restore the Music card.
+- Click-drag the satellite to move the bubble.
+
+The equalizer-bars button in Music Options toggles **Reactive music bubble**. When enabled, Blob uses
+the routed 28-band spectrum when available; otherwise it watches every active Windows playback
+endpoint and derives level/transient motion. Bass expands the body, mids flex the fused neck, and
+treble moves the satellite. This works without enabling Blob's Sound enhancement.
+
+## Sound
+
+Sound is optional. When enabled, Windows audio is routed through VB-CABLE into Blob's separate DSP
+process and then played on the selected physical output. The processing chain provides EQ, bass,
+clarity, stereo width, loudness compression, and a look-ahead limiter.
+
+Running DSP outside the interface keeps rendering stalls away from the audio stream. If VB-CABLE is
+missing, the Sound view reports the missing setup instead of silently failing. FxSound and similar
+apps can compete for the same routing; Blob detects that conflict and offers a clear recovery path.
+
+## Gaming overlay
+
+Gaming is a narrow, no-activation overlay intended for windowed and borderless games. It displays
+real application presentation intervals from PresentMon rather than monitor refresh rate.
+
+- Unlock Blob to navigate or reposition the strip.
+- Lock Blob before playing so clicks pass through it.
+- While locked in Gaming, hold the shortcut modifiers to drag temporarily without changing the lock.
+- Use windowed or borderless fullscreen; ordinary desktop overlays cannot guarantee visibility over
+  exclusive fullscreen applications.
+
+Blob does not inject into games, alter anti-cheat, or change a game's display settings. Missing or
+stale frame data is shown as unavailable rather than replaced with an invented value.
+
+## Screenshots and recordings
+
+Blob normally excludes itself from Windows capture so it can refract the live desktop without
+feeding its previous frame back into the glass. Enable **Include Blob in screenshots and recordings**
+to make it visible to capture tools. In that mode, the backdrop freezes while Blob is visible to
+avoid recursive self-capture.
+
+## Alternative installation
+
+Clone the repository and run the installer locally:
 
 ```powershell
+git clone https://github.com/GAEONN/Blob.git
+cd Blob
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Or double-click **Install Blob.cmd** in the checkout.
-
-The installer uses one elevated system phase. LibreHardwareMonitor and PresentMon are downloaded
-from their official releases and SHA-256 verified. For audio, Blob downloads and verifies the
-official VB-Audio package, then shows its original signed setup window; select **Install Driver**.
-That elevated phase also adds the installing account to Windows' built-in Performance Log Users
-group (resolved by SID, so localized Windows editions work). Sign out and back in once after the
-first installation so Windows issues a login token containing the new FPS permission.
-VB-Audio requires a Windows restart before Sound is ready. Music does not install or require Apple
-Music: Spotify, YouTube, browsers and other Windows media sessions work normally. Apple Music only
-adds its optional catalog search and Playing Next integrations when already installed.
-
-For a deliberately partial installation, the local script accepts `-SkipAudio`, `-SkipSensors`,
-`-SkipPresentMon`, and `-NoLaunch`. Re-running the installer is safe and repairs missing components.
-
-Then run `blob.pyw` (or use the shortcut). It lives in the tray; click the temperature to open the
-pane, drag the pane to pin it anywhere, press Esc to dismiss it.
-
-## Layout
-
-| File | Role |
-| --- | --- |
-| `glass.py` | The renderer: capture, shader, squircle geometry, layered-window output |
-| `blob.pyw` | App shell: window, springs, controls, pointer, pages, input |
-| `engine.py` | Vendor-neutral Windows hardware monitoring |
-| `sound.py` / `audio_engine.py` | Audio routing and the DSP process |
-| `media.py` | Windows now-playing |
-| `applemusic.py` | Apple Music search and playback |
-
-## Notes
-
-To refract the live screen the window has to exclude itself from screen capture, or it would
-refract its own previous frame. A keyboard hook makes screenshots (PrtSc, Win+Shift+S) work anyway
-by briefly dropping that exclusion. Screen recorders still won't see the pane.
-
-Exact sensor availability varies because Windows has no standard temperature/fan API. Blob keeps
-the rest of the app usable while sensors are discovered and names the optional provider in Settings.
-
-## Gaming strip and Playing Next
-
-Choose **Gaming** in Blob's view switcher for a draggable, always-on-top glass strip:
-FPS, frame time, CPU/GPU temperatures and utilization, RAM, fan RPM, and GPU power.
-Blob starts **unlocked** and keeps that state when changing tabs, including Gaming. Press
-**Ctrl+Alt+G** to lock/unlock the whole overlay, or use the tray's
-**Unlock overlay / Lock overlay** command. Change this binding under Settings → Gaming by clicking
-the shortcut and pressing a new modified key combination.
-When locked, mouse clicks pass through Blob on every tab. In Gaming, the shortcut modifiers can
-still be held to drag temporarily without changing the global lock state. Unlocking Gaming expands
-navigation; drag a gap to reposition, then lock before playing. Hiding, reopening, or changing tabs
-never changes the state—the bind is authoritative. Gaming never requests foreground focus.
-This uses Windows' [layered-window input transparency](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows),
-not just a no-activation mouse handler. Use windowed or borderless
-games; an ordinary desktop overlay cannot promise visibility in exclusive fullscreen.
-When a focused game moves above Blob in the topmost window group, Gaming restores
-its position without activation (checked once per second, not every rendered frame).
-For Fortnite, use **Settings > Video > Display > Window Mode > Windowed Fullscreen**
-if Fullscreen hides desktop overlays. Blob does not inject into the game or modify
-anti-cheat or the game's display settings.
-
-FPS/frame time use actual application presentation intervals from the foreground
-process, averaged over a rolling second. They are not monitor refresh rate, display
-FPS, input latency, or frame-generation-inclusive FPS. When Blob has focus it retains
-the last external foreground process. Missing/stale frame data is shown as a dash.
-Hardware measurements retain Blob's existing sensor support and limitations.
-
-The optional FPS helper is the official [PresentMon console application](https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md).
-Install the pinned, SHA-256-verified portable binary without an installer:
+Or double-click `Install Blob.cmd` from an extracted checkout. Optional switches are available for
+deliberately partial setups:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools/setup_presentmon.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 `
+  -SkipAudio -SkipSensors -SkipPresentMon -NoLaunch
 ```
 
-Alternatively set `BLOB_PRESENTMON` to a compatible PresentMon console executable.
-This checkout's helper is installed locally but excluded from Git; other installations
-need the setup step. No service or game injection is used. The full installer provisions
-[Windows Performance Log Users permission](https://github.com/GameTechDev/PresentMon#user-access-denied)
-automatically. If Gaming still reports setup immediately afterward, sign out and back in once;
-Windows does not add new group membership to processes in the existing login session. Frame capture stops when
-Gaming is hidden or closed. Gaming limits glass refresh to approximately 60 Hz,
-updates frame statistics twice a second, and avoids shading the unused window area.
+To start an installed checkout manually, use `Launch Blob.cmd`, the desktop shortcut, or:
 
-Playing Next preserves its cached rows during refreshes, refreshes after track changes,
-coalesces repeated requests, and loads artwork separately. Its reader targets Apple
-Music's actual queue, excluding sidebar playlists. The initial read still depends on
-Apple Music's UI responsiveness; covers also depend on the catalog/network.
+```powershell
+.\.venv\Scripts\pythonw.exe .\blob.pyw
+```
 
-## Development checks
+## Requirements
 
-Run offline regression tests on Windows with the dependencies installed:
+- Windows 11
+- A GPU and driver supporting OpenGL 3.3
+- Python 3.10–3.13; the installer can provision Python through WinGet
+- Administrator approval only for the optional drivers, sensor provider, and FPS permission setup
+
+## Development
+
+Install the Python dependencies into a virtual environment, then launch `blob.pyw`. Run the offline
+regression suite with:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-These check regular/compact layouts at 100–200% scaling, settings and sensor-list scrolling,
-player hit targets, playback timing, mask coverage, and capture-buffer reuse. They do not
-change audio routing or poll hardware. To render a contact sheet using the real GPU glass
-shader over a synthetic background:
+Render the real GPU glass against a synthetic desktop for visual inspection:
 
 ```powershell
-python tests/render_preview.py --output audit.tmp.png
+python tests/render_preview.py --output preview.png
 ```
+
+Key files:
+
+| File | Responsibility |
+| --- | --- |
+| [`blob.pyw`](blob.pyw) | Window lifecycle, layout, animation, input, and view behavior |
+| [`glass.py`](glass.py) | Desktop capture, signed-distance shader, refraction, and layered-window output |
+| [`engine.py`](engine.py) | Vendor-neutral Windows monitoring and optional sensor providers |
+| [`sound.py`](sound.py) | Audio-device management, routing, levels, and UI-facing sound state |
+| [`audio_engine.py`](audio_engine.py) | Isolated real-time DSP process |
+| [`media.py`](media.py) | Windows media sessions and transport commands |
+| [`applemusic.py`](applemusic.py) | Optional Apple Music search, queue, and playback integration |
+| [`DESIGN.md`](DESIGN.md) | Visual system, shader model, interaction rules, and spring behavior |
+| [`PRODUCT.md`](PRODUCT.md) | Product behavior and feature contract |
+
+## Current limitations
+
+- Detailed sensors are only as complete as the PC firmware and selected sensor provider allow.
+- Cross-vendor fan monitoring is practical; universal fan control is not. Safe control requires a
+  supported controller-specific backend.
+- FPS capture may require a sign-out after installation before the new Windows group membership is
+  present in the login token.
+- Exclusive-fullscreen games can appear above normal desktop overlays.
+- Apple Music-specific search and queue features depend on the installed app and its UI availability;
+  normal media controls do not.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE)

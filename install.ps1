@@ -71,7 +71,7 @@ if (-not $localCheckout) {
     $temporaryDownload = Join-Path ([IO.Path]::GetTempPath()) ("Blob-install-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $temporaryDownload | Out-Null
     $archive = Join-Path $temporaryDownload 'Blob.zip'
-    Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/alonsoglunac-debug/Blob/archive/refs/heads/main.zip' -OutFile $archive
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/GAEONN/Blob/archive/refs/heads/main.zip' -OutFile $archive
     Expand-Archive -LiteralPath $archive -DestinationPath $temporaryDownload
     $sourceRoot = Join-Path $temporaryDownload 'Blob-main'
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
