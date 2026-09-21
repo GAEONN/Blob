@@ -31,6 +31,10 @@ Windows app is already installed.
   play or pause, double-tap for next, and hold for previous; its attached satellite restores the
   Music card. Playback comes from the current Windows media session and remains service-neutral.
   The shared overlay shortcut controls the same lock state on every tab.
+- Reactiveness is enabled by default and persisted through the equalizer toggle in Music Options or
+  the matching Settings switch. Bass deforms the main lobe, mids flex the fused neck and treble
+  moves the satellite. Springs and hard shader bounds preserve click geometry. When DSP spectrum is
+  unavailable, a read-only Windows endpoint peak meter supplies an amplitude-reactive fallback.
 
 ## Shared overlay lock
 

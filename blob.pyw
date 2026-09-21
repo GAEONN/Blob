@@ -3,7 +3,6 @@ panel with hardware, sound, music, gaming and settings views. Hardware monitorin
 Sound provides system-wide boost / EQ like FxSound, with a glass spectrum. Drag the panel to pin it
 anywhere (e.g. over a game or video); click the tray number again to hide it."""
 import ctypes
-import math
 import os
 import subprocess
 import sys
@@ -867,13 +866,18 @@ class Panel:
             self.slider("volume", snd.volume if snd.volume is not None else .5,
                         x0 + 38 * S, x1 - 18 * S, cy)
             return
-        centres = np.linspace(x0 + 24 * S, x1 - 24 * S, 4)
+        centres = np.linspace(x0 + 20 * S, x1 - 20 * S, 5)
         self.glass_button("mview:search", centres[0], cy, 12 * S, "\uE721", 9)
         self.glass_button("mview:queue", centres[1], cy, 12 * S, "\uE8FD", 9)
-        self.transport("am:shuffle", centres[2], cy, 12 * S, "shuffle",
+        reactive = self.options.get("musicreactive", True)
+        self.glass_button("toggle:musicreactive", centres[2], cy, 12 * S, "", 9, always=reactive)
+        for dx, half_h in ((-5, 4), (0, 7), (5, 5)):
+            self.ink_shape((centres[2] + (dx - 1) * S, cy - half_h * S,
+                            centres[2] + (dx + 1) * S, cy + half_h * S), S, 245)
+        self.transport("am:shuffle", centres[3], cy, 12 * S, "shuffle",
                        active=bool(getattr(self.am, "shuffle", False)))
         rep = getattr(self.am, "repeat", "off")
-        self.transport("am:repeat", centres[3], cy, 12 * S,
+        self.transport("am:repeat", centres[4], cy, 12 * S,
                        "repeat_one" if rep == "one" else "repeat", active=rep != "off")
 
     def _music_bubble(self, m):
@@ -1280,6 +1284,8 @@ class Panel:
             ("head", "Music"),
             ("toggle", "backdrop", "Album backdrop", self.backdrop, "The cover, blurred, behind the page"),
             ("toggle", "queueart", "Covers in Playing Next", opts.get("queueart", True), None),
+            ("toggle", "musicreactive", "Reactive music bubble", opts.get("musicreactive", True),
+             "Bass, mids and treble reshape the bubble while audio plays"),
             ("note", "music_bubble", "Music bubble: tap to play or pause, double-tap for next, hold for previous.", None, None),
             ("head", "Sound"),
             ("toggle", "soundstart", "Turn boost on at launch", opts.get("soundstart", False), None),
@@ -1305,7 +1311,7 @@ class Panel:
             if kind == "toggle":
                 names = self.wrap(row[2], 13 if c else 14, "Regular", W - 2 * pad - 60 * S)
                 hints = self.wrap(row[4], 10, "Regular", W - 2 * pad) if row[4] else []
-                rh = max(40, 12 + len(names) * 18 + len(hints) * 14)
+                rh = max(40, 22 + len(names) * 18 + len(hints) * 14)
             elif kind == "note":
                 names = self.wrap(row[2], 11, "Regular", W - 2 * pad)
                 rh = max(30, 14 + len(names) * 16)
@@ -1367,7 +1373,7 @@ class Panel:
                     for i, line in enumerate(names):
                         L(pad, y + (16 + i * 18) * S, line, 13 if c else 14, "Regular", 255, "lm")
                     for i, line in enumerate(hints):
-                        L(pad, y + (16 + len(names) * 18 + i * 14) * S, line, 10, "Regular", 135, "lm")
+                        L(pad, y + (24 + len(names) * 18 + i * 14) * S, line, 10, "Regular", 135, "lm")
                     self.toggle(key, val, W - pad - 48 * S, y + 4 * S)
             else:
                 break
@@ -1430,7 +1436,10 @@ class App:
                          k=155, zeta=0.82)
         self.springs.get("music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
                          k=155, zeta=0.82)
-        self.springs.get("music_pulse", 0.0, k=120, zeta=.72)
+        self.springs.get("music_bass", 0.0, k=110, zeta=.68)
+        self.springs.get("music_mid", 0.0, k=155, zeta=.72)
+        self.springs.get("music_treble", 0.0, k=220, zeta=.74)
+        self.music_peak_prev = 0.0
         # Bubble mode occupies the card's former top-right corner. The fixed
         # layered window has room below it, so expansion can grow back down.
         self.hardware_top = self.glass.panel_y(round((210 + Panel.TOP) * self.S))
@@ -2053,13 +2062,36 @@ class App:
             "music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
             k=155, zeta=.82)
         music_morph.target = 1.0 if self.panel.page == "music" and self.panel.music_view == "bubble" else 0.0
-        pulse = self.springs.get("music_pulse", 0.0, k=120, zeta=.72)
-        if music_morph.target and self.media.playing:
-            spectrum = getattr(self.sound, "spectrum", None)
-            energy = float(np.mean(spectrum)) if spectrum is not None and len(spectrum) else 0.0
-            pulse.target = min(1.0, .18 + .62 * energy + .10 * (1 + math.sin(now * 5.2)))
+        bass = self.springs.get("music_bass", 0.0, k=110, zeta=.68)
+        mid = self.springs.get("music_mid", 0.0, k=155, zeta=.72)
+        treble = self.springs.get("music_treble", 0.0, k=220, zeta=.74)
+        reactive = bool(self.panel.options.get("musicreactive", True))
+        reactive_live = bool(music_morph.target and reactive and self.media.playing)
+        if hasattr(self.sound, "set_reactive_active"):
+            self.sound.set_reactive_active(reactive_live)
+        if reactive_live:
+            self.sound.heartbeat()
+            spectrum = np.asarray(getattr(self.sound, "spectrum", ()), np.float32)
+            if spectrum.size >= 12 and float(spectrum.max(initial=0)) > .025:
+                def band_level(values):
+                    raw = .65 * float(np.mean(values)) + .35 * float(np.max(values))
+                    return min(1.0, max(0.0, (raw - .025) / .72) ** .72)
+                n = spectrum.size
+                bass.target = band_level(spectrum[:max(1, round(n * .32))])
+                mid.target = band_level(spectrum[round(n * .32):max(round(n * .32) + 1, round(n * .70))])
+                treble.target = band_level(spectrum[round(n * .70):])
+            else:
+                # Endpoint peak remains available when Blob's optional DSP route
+                # is off. Transients drive the quicker lobes; level drives body.
+                peak = min(1.0, max(0.0, float(getattr(self.sound, "reactive_peak", 0.0))))
+                transient = max(0.0, peak - self.music_peak_prev)
+                self.music_peak_prev += (peak - self.music_peak_prev) * .28
+                bass.target = min(1.0, peak ** .62)
+                mid.target = min(1.0, peak * .72 + transient * 2.2)
+                treble.target = min(1.0, peak * .24 + transient * 5.0)
         else:
-            pulse.target = 0.0
+            bass.target = mid.target = treble.target = 0.0
+            self.music_peak_prev *= .8
         tabs = self.springs.get("tabs", 0.0, k=300, zeta=0.85)
         tabs.target = 1.0 if self.panel.tabs_open else 0.0
         if abs(tabs.x - self.panel.tabs_t) > 0.004:     # redraw the labels as the pill opens
@@ -2132,7 +2164,10 @@ class App:
         self.light /= np.linalg.norm(self.light) + 1e-6
         self.light = np.round(self.light, 3)
         self.glass.set_panel_shape(max(morph.x, music_morph.x))
-        self.glass.set_bubble_pulse(pulse.x if self.panel.page == "music" else 0.0)
+        if self.panel.page == "music":
+            self.glass.set_bubble_audio(bass.x, mid.x, treble.x)
+        else:
+            self.glass.set_bubble_audio(0.0, 0.0, 0.0)
         self.glass.render(self.hwnd, self.pos[0], self.pos[1], width.x / self.ss,
                           panel_h, fade, tuple(self.light), self.glassiness, panel_y=panel_y)
         if fade >= 0.999 and self.old_controls:
@@ -2315,7 +2350,7 @@ class App:
                 cfg = engine.load_config()
                 cfg["backdrop"] = self.panel.backdrop
                 engine.save_config(cfg)
-            elif key in ("queueart", "soundstart"):
+            elif key in ("queueart", "musicreactive", "soundstart"):
                 opts = dict(self.panel.options)
                 opts[key] = not opts.get(key, key != "soundstart")
                 self.panel.options = opts

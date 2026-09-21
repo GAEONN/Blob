@@ -106,7 +106,7 @@ class LayoutTests(unittest.TestCase):
                         self.assert_bounds(p)
 
     def test_settings_labels_clear_toggles_and_all_controls_reachable(self):
-        expected = {"backdrop", "queueart", "soundstart", "startup", "capture"}
+        expected = {"backdrop", "queueart", "musicreactive", "soundstart", "startup", "capture"}
         for compact in (False, True):
             p, seen = self.panel(compact=compact, page="settings"), set()
             for row in range(20):
@@ -166,7 +166,8 @@ class LayoutTests(unittest.TestCase):
                 p.music_menu = "options"
                 self.draw(p)
                 self.assertNotIn("media:toggle", p.rects)
-                for key in ("mview:search", "mview:queue", "am:shuffle", "am:repeat"):
+                for key in ("mview:search", "mview:queue", "toggle:musicreactive",
+                            "am:shuffle", "am:repeat"):
                     self.assertIn(key, p.rects)
                 self.assertIn("musicutil:options", p.rects)
                 self.assert_bounds(p)
@@ -513,6 +514,18 @@ class LifecycleTests(unittest.TestCase):
             app.media.previous.assert_called_once_with()
             app.finish_music_bubble_press()
             self.assertFalse(app.music_click_pending)
+
+    def test_music_reactivity_toggle_is_shared_and_persisted(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = NS(options={"musicreactive": True})
+        app.draw_content, app.frame = Mock(), Mock()
+        cfg = {"options": {"musicreactive": True}}
+        with patch.object(blob.engine, "load_config", return_value=cfg), \
+             patch.object(blob.engine, "save_config") as save:
+            app.click("toggle:musicreactive", 0)
+        self.assertFalse(app.panel.options["musicreactive"])
+        self.assertFalse(cfg["options"]["musicreactive"])
+        save.assert_called_once_with(cfg)
 
     def test_hardware_bubble_cycles_only_quick_modes(self):
         app = blob.App.__new__(blob.App)

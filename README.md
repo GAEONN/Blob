@@ -70,7 +70,13 @@ Volume button at the left of transport and an Options button at the right. Volum
 middle row with an inline system-volume slider; Options exposes Search, Playing Next, Shuffle and
 Repeat without crowding the default transport.
 
-The mini player's unmarked corner circle morphs the card into a small audio-reactive player bubble,
+The mini player's unmarked corner circle morphs the card into an audio-reactive player bubble:
+bass expands the main body, mids flex the liquid neck, and treble animates the restore satellite.
+The response is spring-smoothed and bounded so the bubble never escapes its stable hit targets.
+The equalizer control in Music Options—or **Reactive music bubble** in Settings—toggles it. A
+lightweight Windows endpoint meter keeps amplitude response working when Blob's optional Sound
+enhancement is off; the routed Sound spectrum provides true frequency-band detail when available.
+The bubble is
 anchored to the card's top-right corner. Tap the large lobe to play or pause, double-tap it for the
 next track, or hold it for the previous track. Select the small attached lobe to restore the card.
 These controls use the active Windows media session, so they are not tied to Apple Music. The same

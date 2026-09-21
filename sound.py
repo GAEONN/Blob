@@ -134,6 +134,8 @@ class Sound:
         self.fx_conflict = False
         self.volume = None         # Windows master volume (whatever device is default), 0..1
         self.spectrum = np.zeros(N_BANDS)
+        self.reactive_active = False
+        self.reactive_peak = 0.0   # default render endpoint peak; available even with boost off
         # A new launch must not reset an orphan engine's heartbeat/QUIT flags or
         # share its output stream. Pass this instance's unique mapping to its child.
         self.shm = shared_memory.SharedMemory(create=True, size=64 * 8)
@@ -202,6 +204,9 @@ class Sound:
     def refresh_devices(self):
         self.jobs.put(("refresh", None))
 
+    def set_reactive_active(self, active):
+        self.reactive_active = bool(active)
+
     def quit_fxsound(self):
         for proc in fxsound_procs():
             try:
@@ -240,14 +245,15 @@ class Sound:
     # ── worker thread: engine process + Windows routing ──
     def _worker(self):
         import comtypes
+        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
         try:
             comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
         except OSError:
             pass  # COM already initialised on this thread
-        last_watch = 0.0
+        last_watch, meter = 0.0, None
         while True:
             try:
-                job, arg = self.jobs.get(timeout=0.5)
+                job, arg = self.jobs.get(timeout=0.05 if self.reactive_active else 0.5)
             except queue.Empty:
                 job, arg = None, None
             try:
@@ -276,6 +282,22 @@ class Sound:
                 if time.time() - last_watch > 1.5:
                     last_watch = time.time()
                     self._watch()
+                    if self.reactive_active:
+                        meter = None  # follow default-device changes without polling COM every frame
+                if self.reactive_active:
+                    try:
+                        if meter is None:
+                            device = AudioUtilities.GetSpeakers()
+                            iface = device._dev.Activate(
+                                IAudioMeterInformation._iid_, comtypes.CLSCTX_ALL, None)
+                            meter = iface.QueryInterface(IAudioMeterInformation)
+                        peak = float(meter.GetPeakValue())
+                        self.reactive_peak = max(peak, self.reactive_peak * .68)
+                    except Exception:
+                        meter = None
+                        self.reactive_peak *= .72
+                else:
+                    self.reactive_peak *= .72
             except Exception as e:
                 core.log(f"sound worker: {job}: {e!r}")
 
