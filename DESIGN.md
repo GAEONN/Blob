@@ -234,6 +234,11 @@ hit testing in the fused neck and restores the full card. A short gesture explan
 Music settings so the bubble itself remains unlabelled. The existing overlay shortcut temporarily
 switches either bubble from interaction to unlocked drag mode; relocking restores Music gestures.
 
+In both card and cover modes, Volume and Options are stable edge buttons around the transport row.
+Opening either uses the existing row as an inline utility surface instead of growing another panel:
+Volume shows the system-volume slider; Options shows Search, Playing Next, Shuffle and Repeat. The
+three-button previous/play-next transport returns when the utility is closed.
+
 ### Gaming strip and Playing Next extension
 
 This addition describes the native extension in `blob.pyw`, `gaming.py` and

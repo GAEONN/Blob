@@ -397,6 +397,7 @@ class Panel:
         self.w = round(self.WIDE * self.S)
         self.page = "blob"
         self.music_view = "now"
+        self.music_menu = None       # contextual mini/cover utility: volume or options
         self.hardware_view = "card"
         self.hardware_mode = "auto"
         self.hardware_status = "Monitoring only · fan profiles are not connected"
@@ -803,10 +804,10 @@ class Panel:
         if view == "queue":
             return self._music_queue(pad, top)
         if view == "art":
-            return self._music_art(m, pad, top, seek)
-        return self._music_mini(m, seek, pad, top)
+            return self._music_art(m, snd, pad, top, seek)
+        return self._music_mini(m, snd, seek, pad, top)
 
-    def _music_mini(self, m, seek, pad, top):
+    def _music_mini(self, m, snd, seek, pad, top):
         """Apple Music-inspired horizontal mini player."""
         S, W = self.S, self.w
         px = lambda v: top + v * S
@@ -836,11 +837,41 @@ class Panel:
         self._progress(m, seek, tx, right, px(44), times=False)
         cy = px(78)
         playing = bool(m and m.playing)
-        self.glass_button("mview:search", pad + 14 * S, cy, 13 * S, "\uE721", 10)
-        self.transport("media:previous", W / 2 - 48 * S, cy, 15 * S, "previous")
-        self.transport("media:toggle", W / 2, cy, 20 * S, "pause" if playing else "play", always=True)
-        self.transport("media:next", W / 2 + 48 * S, cy, 15 * S, "next")
-        self.glass_button("mview:queue", W - pad - 14 * S, cy, 13 * S, "\uE8FD", 10)
+        if not self.music_menu:
+            self.transport("media:previous", W / 2 - 48 * S, cy, 15 * S, "previous")
+            self.transport("media:toggle", W / 2, cy, 20 * S, "pause" if playing else "play", always=True)
+            self.transport("media:next", W / 2 + 48 * S, cy, 15 * S, "next")
+        utility_box = (pad + 34 * S, cy - 24 * S, W - pad - 34 * S, cy + 24 * S)
+        self._music_utility_panel(snd, utility_box, cy)
+        # Draw these last so they remain the two stable anchors when a utility
+        # panel replaces the middle transport row.
+        self.glass_button("musicutil:volume", pad + 14 * S, cy, 13 * S, "\uE995", 10,
+                          always=self.music_menu == "volume")
+        self.glass_button("musicutil:options", W - pad - 14 * S, cy, 13 * S, "\uE712", 10,
+                          always=self.music_menu == "options")
+
+    def _music_utility_panel(self, snd, box, cy):
+        """Inline utility surface shared by the mini card and cover overlay."""
+        menu = self.music_menu
+        if menu not in ("volume", "options"):
+            return
+        S = self.S
+        x0, y0, x1, y1 = box
+        self.static(box, (y1 - y0) / 2, strength=8 * S, bevel=10 * S, zoom=.96,
+                    rim=.9, frost=1.0, lift=.16, raised=1.0)
+        if menu == "volume":
+            self.di.text((x0 + 18 * S, cy), "\uE993", font=self.f.icon(10), fill=190, anchor="mm")
+            self.slider("volume", snd.volume if snd.volume is not None else .5,
+                        x0 + 38 * S, x1 - 18 * S, cy)
+            return
+        centres = np.linspace(x0 + 24 * S, x1 - 24 * S, 4)
+        self.glass_button("mview:search", centres[0], cy, 12 * S, "\uE721", 9)
+        self.glass_button("mview:queue", centres[1], cy, 12 * S, "\uE8FD", 9)
+        self.transport("am:shuffle", centres[2], cy, 12 * S, "shuffle",
+                       active=bool(getattr(self.am, "shuffle", False)))
+        rep = getattr(self.am, "repeat", "off")
+        self.transport("am:repeat", centres[3], cy, 12 * S,
+                       "repeat_one" if rep == "one" else "repeat", active=rep != "off")
 
     def _music_bubble(self, m):
         """Gesture player: tap toggles, double-tap skips, hold goes to the previous track."""
@@ -862,7 +893,7 @@ class Panel:
             self.di.polygon([(cx - u * .55, cy - u), (cx - u * .55, cy + u),
                              (cx + u * .95, cy)], fill=235)
 
-    def _music_art(self, m, pad, top, seek=None):
+    def _music_art(self, m, snd, pad, top, seek=None):
         """Expanded cover; hovering reveals an in-art now-playing overlay."""
         S, W = self.S, self.w
         a = round(W - 2 * pad)
@@ -874,8 +905,8 @@ class Panel:
         self.controls.append(("hover", "arthover", artbox, self.inner_radius(pad)))
 
         hover = self.hover_key or ""
-        reveal = hover == "arthover" or hover == "mview:now" or hover.startswith(
-            ("media:", "am:", "slider:seek"))
+        reveal = bool(self.music_menu) or hover == "arthover" or hover == "mview:now" or hover.startswith(
+            ("media:", "am:", "musicutil:", "mview:", "slider:seek", "slider:volume"))
         if not reveal:
             return
 
@@ -900,14 +931,15 @@ class Panel:
         self._progress(m, seek, ax + 24 * S, ax + a - 24 * S, ay + a - 88 * S, times=False)
         cy = ay + a - 45 * S
         playing = bool(m and m.playing)
-        am, rep = self.am, getattr(self.am, "repeat", "off")
-        self.transport("am:shuffle", W / 2 - 108 * S, cy, 13 * S, "shuffle",
-                       active=bool(getattr(am, "shuffle", False)))
-        self.transport("media:previous", W / 2 - 56 * S, cy, 17 * S, "previous")
-        self.transport("media:toggle", W / 2, cy, 23 * S, "pause" if playing else "play", always=True)
-        self.transport("media:next", W / 2 + 56 * S, cy, 17 * S, "next")
-        self.transport("am:repeat", W / 2 + 108 * S, cy, 13 * S,
-                       "repeat_one" if rep == "one" else "repeat", active=rep != "off")
+        if not self.music_menu:
+            self.transport("media:previous", W / 2 - 56 * S, cy, 17 * S, "previous")
+            self.transport("media:toggle", W / 2, cy, 23 * S, "pause" if playing else "play", always=True)
+            self.transport("media:next", W / 2 + 56 * S, cy, 17 * S, "next")
+        self._music_utility_panel(snd, (ax + 38 * S, cy - 25 * S, ax + a - 38 * S, cy + 25 * S), cy)
+        self.glass_button("musicutil:volume", ax + 18 * S, cy, 13 * S, "\uE995", 10,
+                          always=self.music_menu == "volume")
+        self.glass_button("musicutil:options", ax + a - 18 * S, cy, 13 * S, "\uE712", 10,
+                          always=self.music_menu == "options")
 
     def _artwork(self, m, ax, ay, a, radius, glyph_size):
         """Album art as a squircle with a glass rim; clicking it opens the artwork view."""
@@ -1604,6 +1636,7 @@ class App:
             cfg["music_view"] = view
             engine.save_config(cfg)
         self.panel.music_view = view
+        self.panel.music_menu = None
         self.panel.tabs_open = False
         self.panel.tabs_t = 0.0
         self.springs.pop("tabs", None)
@@ -2197,6 +2230,7 @@ class App:
                 self.media_seen = None
                 self.old_page_springs()
                 self.panel.page = key
+                self.panel.music_menu = None
                 self.gaming_unlocked = False
                 self.bubble_unlocked = False
                 self.apply_gaming_input()
@@ -2231,6 +2265,8 @@ class App:
             if key == "queue":
                 self.am.refresh_queue()
                 self.last_queue = time.perf_counter()
+        elif kind == "musicutil":
+            self.panel.music_menu = None if self.panel.music_menu == key else key
         elif kind == "result":
             self.am.play_result(int(key))
             self.hold_until = time.time() + 10
@@ -2480,6 +2516,10 @@ class App:
                 elif h:
                     self.pressed = h
                     self.click(h, x)
+                elif self.panel.page == "music" and self.panel.music_menu:
+                    self.panel.music_menu = None
+                    self.draw_content()
+                    self.frame_dirty = True
                 else:
                     cx, cy = cursor_pos()
                     self.drag = (cx - self.pos[0], cy - self.pos[1])

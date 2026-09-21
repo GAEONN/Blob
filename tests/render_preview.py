@@ -83,8 +83,10 @@ def main(output, gaming=False, errors=False):
              ("Settings / compact", True, "settings", "now", 10, False),
              ("Sound / conflict", False, "sound", "now", 0, True),
              ("Music / mini player", True, "music", "now", 0, False),
+             ("Music / volume panel", True, "music", "now", 0, False),
              ("Music / player bubble", True, "music", "bubble", 0, False),
              ("Artwork / hover controls", True, "music", "art", 0, False),
+             ("Artwork / options panel", True, "music", "art", 0, False),
              ("Hardware / card", False, "blob", "now", 0, False),
              ("Hardware / details", False, "blob", "details", 0, False),
              ("Hardware / mode bubble", False, "blob", "bubble", 0, False),
@@ -107,6 +109,10 @@ def main(output, gaming=False, errors=False):
         if page == "blob":
             p.tabs_t = 0
         p.hardware_view = "bubble" if page == "blob" and view == "bubble" else "card"
+        if title == "Music / volume panel":
+            p.music_menu = "volume"
+        elif title == "Artwork / options panel":
+            p.music_menu = "options"
         p.hardware_mode = "balanced"
         p.update_width()
         if page == "music" and view == "art":

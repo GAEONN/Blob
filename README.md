@@ -65,7 +65,10 @@ invisible. Resting the pointer on a result preloads it, which brings a click dow
 Each page now chooses the form that fits its job instead of exposing a universal C/R switch. Music
 opens as an Apple Music-inspired horizontal mini player. Hovering its cover reveals the expand
 affordance; selecting it grows into a cover-first view. Hover the expanded cover to reveal metadata,
-timeline, transport and the collapse control that returns to the mini player.
+timeline, transport and the collapse control that returns to the mini player. Both forms keep a
+Volume button at the left of transport and an Options button at the right. Volume replaces the
+middle row with an inline system-volume slider; Options exposes Search, Playing Next, Shuffle and
+Repeat without crowding the default transport.
 
 The mini player's unmarked corner circle morphs the card into a small audio-reactive player bubble,
 anchored to the card's top-right corner. Tap the large lobe to play or pause, double-tap it for the

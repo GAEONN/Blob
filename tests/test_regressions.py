@@ -147,6 +147,30 @@ class LayoutTests(unittest.TestCase):
             self.assertFalse(intersects(bubble, p.rects[key]), key)
         self.assert_bounds(p)
 
+    def test_music_card_and_cover_expose_volume_and_options(self):
+        for view in ("now", "art"):
+            with self.subTest(view=view):
+                p = self.panel(page="music", view=view)
+                if view == "art":
+                    p.hover_key = "arthover"
+                self.draw(p)
+                self.assertIn("musicutil:volume", p.rects)
+                self.assertIn("musicutil:options", p.rects)
+
+                p.music_menu = "volume"
+                self.draw(p)
+                self.assertIn("slider:volume", p.rects)
+                self.assertNotIn("media:toggle", p.rects)
+                self.assertIn("musicutil:volume", p.rects)
+
+                p.music_menu = "options"
+                self.draw(p)
+                self.assertNotIn("media:toggle", p.rects)
+                for key in ("mview:search", "mview:queue", "am:shuffle", "am:repeat"):
+                    self.assertIn(key, p.rects)
+                self.assertIn("musicutil:options", p.rects)
+                self.assert_bounds(p)
+
     def test_music_bubble_has_gesture_body_and_restore_satellite(self):
         p = self.panel(page="music", view="bubble")
         self.draw(p)
@@ -241,7 +265,7 @@ class LayoutTests(unittest.TestCase):
                         p.hover_key = "arthover"
                     self.draw(p)
                     relevant = [(k, b) for k, b in p.rects.items()
-                                if k.startswith(("media:", "am:", "page:", "slider:seek")) or
+                                if k.startswith(("media:", "am:", "musicutil:", "page:", "slider:seek")) or
                                 k in ("tabs", "mview:art", "mview:now")]
                     for i, (key, box) in enumerate(relevant):
                         for other, rect in relevant[i + 1:]:

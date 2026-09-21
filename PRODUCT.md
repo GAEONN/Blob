@@ -24,6 +24,9 @@ Windows app is already installed.
 - The Music card keeps artwork, metadata, timeline and transport clear of its unmarked corner
   bubble control. The same continuous width, height, content and silhouette springs contract it
   toward that top-right control instead of replacing the card with a flick.
+- Mini-card and cover modes share two stable utility anchors: Volume on the left and Options on the
+  right. Each replaces only the middle control row—Volume with a system slider, Options with Search,
+  Playing Next, Shuffle and Repeat—so the surface gains capability without permanent clutter.
 - The player bubble breathes subtly with the live audio spectrum. Its main lobe supports tap to
   play or pause, double-tap for next, and hold for previous; its attached satellite restores the
   Music card. Playback comes from the current Windows media session and remains service-neutral.
