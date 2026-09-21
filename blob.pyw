@@ -668,9 +668,12 @@ class Panel:
         power = gpu.get("power")
         power_hint = "AC power" if s.get("power", {}).get("plugged") else "On battery"
         fps_hint = f"{ms:.1f} ms" if ms is not None else "Focus a game"
-        if fps is None and any(w in game.get("status", "") for w in ("permission", "Install", "unavailable", "Couldn't")):
+        fps_status = game.get("status", "")
+        if fps is None and "sign out" in fps_status.lower():
+            fps_hint = "Sign out once"
+        elif fps is None and any(w in fps_status for w in ("permission", "installer", "Install", "unavailable", "Couldn't")):
             fps_hint = "Setup needed"
-        if fps is None and "Capture stopped" in game.get("status", ""):
+        if fps is None and "Capture stopped" in fps_status:
             fps_hint = "Retrying…"
         metrics = [
             ("FPS", f"{fps:.0f}" if fps is not None else "—", fps_hint, None),

@@ -33,9 +33,9 @@ class GamingLayoutTests(unittest.TestCase):
 
     def test_missing_fps_is_not_faked(self):
         p = self.panel(page="gaming")
-        p.game = {"status": "FPS needs Windows Performance Log Users permission."}
+        p.game = {"status": "Run the installer, then sign out once to enable FPS permission."}
         self.draw(p)
-        self.assertIn("Setup needed", [t for t, _ in p.labels])
+        self.assertIn("Sign out once", [t for t, _ in p.labels])
         self.assertNotIn("0", [t for t, _ in p.labels])
         p.game["status"] = "FPS unavailable. Capture stopped; retrying shortly."
         self.draw(p)
@@ -83,7 +83,7 @@ class FrameStatsTests(unittest.TestCase):
         m.status, m._stop = "Focus a game to see its FPS.", Mock()
         m._on_exit()
         self.assertIn("Capture stopped", m.status)
-        m.status = "FPS needs Windows Performance Log Users permission."
+        m.status = "Run the installer, then sign out once to enable FPS permission."
         m._on_exit()
         self.assertIn("permission", m.status)
 

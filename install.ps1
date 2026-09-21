@@ -104,13 +104,14 @@ try {
     }
 
     Write-Step 4 'Preparing system integrations...'
-    if (-not $SkipSensors -or -not $SkipAudio) {
+    if (-not $SkipSensors -or -not $SkipAudio -or -not $SkipPresentMon) {
         $systemScript = Join-Path $installRoot 'tools\setup_system.ps1'
         $systemArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $systemScript,
                         '-InstallRoot', $installRoot,
                         '-TargetUser', [Security.Principal.WindowsIdentity]::GetCurrent().Name)
         if ($SkipSensors) { $systemArgs += '-SkipSensors' }
         if ($SkipAudio) { $systemArgs += '-SkipAudio' }
+        if ($SkipPresentMon) { $systemArgs += '-SkipPresentMon' }
         & powershell.exe @systemArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Warning 'One or more optional integrations could not be installed. Blob itself is ready.'

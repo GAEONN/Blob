@@ -14,6 +14,13 @@ $blob = Join-Path $InstallRoot 'blob.pyw'
 $presentMon = Join-Path $InstallRoot 'tools\PresentMon-2.5.1-x64.exe'
 $sensorExe = Join-Path $InstallRoot 'tools\LibreHardwareMonitor\LibreHardwareMonitor.exe'
 $sensorAuth = Join-Path $InstallRoot 'tools\LibreHardwareMonitor\.blob-http-auth.json'
+$fpsPermission = $false
+try {
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $fpsPermission = [bool](Get-LocalGroupMember -SID 'S-1-5-32-559' | Where-Object {
+        $_.SID -and $_.SID.Value -eq $currentSid
+    })
+} catch { }
 
 $audioReady = $false
 try {
@@ -40,6 +47,9 @@ if (Test-Path -LiteralPath $sensorAuth) {
 Write-Host 'Installation check:' -ForegroundColor White
 Show-Result 'Blob core' ((Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $blob)) 'private Python environment'
 Show-Result 'FPS' (Test-Path -LiteralPath $presentMon) 'PresentMon helper'
+Show-Result 'FPS permission' $fpsPermission ($(if ($fpsPermission) {
+    'Performance Log Users membership; sign out once if capture still reports setup'
+} else { 're-run the installer to grant ETW capture access' }))
 Show-Result 'Sensors' $sensorReady 'LibreHardwareMonitor provider'
 Show-Result 'Sensor feed' $sensorFeedReady 'authenticated local CPU, GPU, and fan readings'
 Show-Result 'Audio' $audioReady ($(if ($audioReady) { 'VB-CABLE endpoints detected' } else { 'restart Windows if the driver was just installed' }))

@@ -108,7 +108,7 @@ class GamingMonitor:
                     self.stats.add(dict(zip(header, fields)), time.monotonic())
                 self.status = "Focus a game to see its FPS."
             elif "access denied" in line.lower() or "failed to start trace" in line.lower():
-                self.status = "FPS needs Windows Performance Log Users permission."
+                self.status = "Run the installer, then sign out once to enable FPS permission."
 
     def _start(self):
         path = find_presentmon()

@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$InstallRoot,
     [string]$TargetUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
+    [switch]$SkipPresentMon,
     [switch]$SkipSensors,
     [switch]$SkipAudio,
     [switch]$RepairSensorEndpoint,
@@ -33,6 +34,7 @@ function Invoke-ElevatedSelf {
               '-InstallRoot', (Quote-Argument $InstallRoot), '-TargetUser', (Quote-Argument $TargetUser))
     if ($SkipSensors) { $args += '-SkipSensors' }
     if ($SkipAudio) { $args += '-SkipAudio' }
+    if ($SkipPresentMon) { $args += '-SkipPresentMon' }
     if ($RepairSensorEndpoint) { $args += '-RepairSensorEndpoint' }
     try {
         $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $args -Wait -PassThru
@@ -57,6 +59,28 @@ function Remove-SafeTempDirectory([string]$Path) {
         throw "Refusing to remove a non-temporary directory: $resolved"
     }
     Remove-Item -LiteralPath $resolved -Recurse -Force
+}
+
+function Grant-PresentMonAccess {
+    # StartTrace checks the caller's logon token. Resolve this built-in group by
+    # SID so the repair works on localized Windows installations too.
+    $groupSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-559')
+    $targetSid = (New-Object Security.Principal.NTAccount($TargetUser)).Translate(
+        [Security.Principal.SecurityIdentifier])
+    $members = @(Get-LocalGroupMember -SID $groupSid -ErrorAction SilentlyContinue)
+    if ($members | Where-Object { $_.SID -and $_.SID.Value -eq $targetSid.Value }) {
+        Write-Host "PresentMon access is already provisioned for $TargetUser." -ForegroundColor Green
+        return
+    }
+    try {
+        Add-LocalGroupMember -SID $groupSid -Member $targetSid -ErrorAction Stop
+    } catch {
+        $group = Get-LocalGroup -SID $groupSid -ErrorAction Stop
+        & net.exe localgroup $group.Name $TargetUser /add | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Could not grant PresentMon access to $TargetUser." }
+    }
+    Write-Host "PresentMon access granted to $TargetUser." -ForegroundColor Green
+    Write-Host 'Sign out of Windows and back in once so the new FPS permission enters your login token.' -ForegroundColor Yellow
 }
 
 function Get-VerifiedDownload([string]$Uri, [string]$Destination, [string]$ExpectedSha256) {
@@ -239,6 +263,9 @@ function Install-AudioSupport {
 }
 
 if ($DryRun) {
+    if (-not $SkipPresentMon) {
+        Write-Host "PLAN FPS access: add $TargetUser to the built-in Performance Log Users group by SID"
+    }
     if (-not $SkipSensors) {
         Write-Host "PLAN sensors: PawnIO via WinGet; verified LibreHardwareMonitor $LhmVersion; elevated startup task for $TargetUser"
     }
@@ -263,6 +290,12 @@ if ($RepairSensorEndpoint) {
 if (-not (Test-Administrator)) { Invoke-ElevatedSelf }
 
 $failed = $false
+if (-not $SkipPresentMon) {
+    try { Grant-PresentMonAccess } catch {
+        $failed = $true
+        Write-Warning "PresentMon permission setup failed: $($_.Exception.Message)"
+    }
+}
 if (-not $SkipSensors) {
     try { Install-SensorSupport } catch {
         $failed = $true

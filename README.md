@@ -128,6 +128,9 @@ Or double-click **Install Blob.cmd** in the checkout.
 The installer uses one elevated system phase. LibreHardwareMonitor and PresentMon are downloaded
 from their official releases and SHA-256 verified. For audio, Blob downloads and verifies the
 official VB-Audio package, then shows its original signed setup window; select **Install Driver**.
+That elevated phase also adds the installing account to Windows' built-in Performance Log Users
+group (resolved by SID, so localized Windows editions work). Sign out and back in once after the
+first installation so Windows issues a login token containing the new FPS permission.
 VB-Audio requires a Windows restart before Sound is ready. Music does not install or require Apple
 Music: Spotify, YouTube, browsers and other Windows media sessions work normally. Apple Music only
 adds its optional catalog search and Playing Next integrations when already installed.
@@ -193,9 +196,10 @@ powershell -ExecutionPolicy Bypass -File tools/setup_presentmon.ps1
 
 Alternatively set `BLOB_PRESENTMON` to a compatible PresentMon console executable.
 This checkout's helper is installed locally but excluded from Git; other installations
-need the setup step. No service, game injection, or privilege change is performed.
-Some accounts need [Windows Performance Log Users permission](https://github.com/GameTechDev/PresentMon#user-access-denied);
-Blob reports the problem instead of silently elevating. Frame capture stops when
+need the setup step. No service or game injection is used. The full installer provisions
+[Windows Performance Log Users permission](https://github.com/GameTechDev/PresentMon#user-access-denied)
+automatically. If Gaming still reports setup immediately afterward, sign out and back in once;
+Windows does not add new group membership to processes in the existing login session. Frame capture stops when
 Gaming is hidden or closed. Gaming limits glass refresh to approximately 60 Hz,
 updates frame statistics twice a second, and avoids shading the unused window area.
 
