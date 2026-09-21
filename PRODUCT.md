@@ -6,9 +6,9 @@ enhancement and music controls. Hardware support varies by sensor/provider. Musi
 with any Windows media session; Apple Music queue operations are an optional extension when its
 Windows app is already installed.
 
-## Hardware card and mode bubble
+## System card and mode bubble
 
-- The first view is labeled Hardware. Its card prioritizes CPU/GPU temperature and fan RPM, offers
+- The first view is labeled System. Its card prioritizes CPU/GPU temperature and fan RPM, offers
   Auto, Quiet, Balanced, Turbo and Custom preferences, and expands in place for the full
   bounded sensor inventory.
 - A single-circle contextual corner control springs the card into a fused two-circle glass bubble.
@@ -17,17 +17,20 @@ Windows app is already installed.
   persist, but are explicitly described as monitoring-only until a real fan-profile backend is
   connected; Blob never pretends that a firmware or pump setting changed.
 - The top-right anchor stays fixed during the morph. Bubble placement follows Blob's shared global
-  lock state and is draggable whenever the overlay is unlocked.
+  lock state. Only the satellite restores or drags the bubble and shows the move cursor when
+  unlocked; the main body remains a mode-cycle target.
 
 ## Music card and player bubble
 
-- The Music card keeps artwork, metadata, timeline and transport clear of its unmarked corner
-  bubble control. The same continuous width, height, content and silhouette springs contract it
-  toward that top-right control instead of replacing the card with a flick.
-- Mini-card and cover modes share two stable utility anchors: Volume on the left and Options on the
-  right. Each replaces only the middle control row—Volume with a system slider, Options with Search,
-  Playing Next, Shuffle and Repeat—so the surface gains capability without permanent clutter.
-- The player bubble visibly breathes with live system audio. Its main lobe supports tap to
+- Regular Music restores the cover-first layout at 340 × 582 DIP with 296-DIP square art.
+  Compact is 248 × 216 DIP with a 54-DIP square thumbnail and a 6-DIP continuous corner.
+  Both expose Search, Playing Next and filled transport; Regular has a volume slider below
+  transport. The optional bubble retains the existing continuous spring morph.
+- Full-cover mode is 340 DIP square in either size, with a uniform 4-DIP rim and a persistent
+  contrast-backed return control. Its hover overlay retains Volume and Options utility anchors;
+  these inline utilities are not the Regular/Compact card layout.
+- The player bubble responds to relative audio transients; a steady loud signal
+  settles rather than holding the surface inflated. The bubble's main lobe supports tap to
   play or pause, double-tap for next, and hold for previous; its attached satellite restores the
   Music card on click and repositions the bubble when dragged. Playback comes from the current
   Windows media session and remains service-neutral.
@@ -37,6 +40,9 @@ Windows app is already installed.
   moves the satellite. Springs and hard shader bounds preserve click geometry. When DSP spectrum is
   unavailable, read-only peak meters across all active Windows playback endpoints supply an
   amplitude-reactive fallback without trusting a potentially stale player transport status.
+  This fallback uses the same amplitude input for all three envelopes, not measured frequency
+  bands or fabricated beats. Full-cover mode stays stationary. Its visualizer button toggles
+  in-cover bars, using DSP bins when available and a uniform amplitude meter otherwise.
 
 ## Shared overlay lock
 
@@ -51,6 +57,9 @@ Windows app is already installed.
   glass surface and provides navigation through its left menu without activating
   the strip over the foreground application. Windowed/borderless use is intended;
   visibility over exclusive fullscreen is not guaranteed.
+- The optional 104 × 98 DIP FPS bubble shows only FPS and frame time in ms. Its satellite
+  restores the strip or drags while unlocked, and is its only move-cursor target.
+  Settings → Overlay → Gaming view also selects Strip / FPS bubble.
 - FPS/frame time require the optional PresentMon console helper. `gaming.py`
   derives them from application presentation intervals for the external foreground
   process, selecting one swapchain rather than combining them. Missing/stale frame
@@ -65,3 +74,20 @@ Evidence: `blob.pyw`, `gaming.py`, `applemusic.py`, `README.md` and
 `.impeccable/surfaces/blob-pyw.md`. The handoff reports real desktop application
 PresentMon frames observed, not an end-to-end gameplay FPS test. This documentation
 pass does not assert additional runtime or test results.
+
+## V3 settings, sensor scope and verification
+
+Settings → Appearance → Size selects Regular / Compact. Settings wraps labels and hints into
+variable-height rows, scrolls by complete rows, and gives the shortcut input its own row.
+
+Sensor feeds merge per field: LibreHardwareMonitor/OpenHardwareMonitor and HWiNFO can supplement
+one another; ASUS supplies an optional read-only fallback. Availability depends on hardware,
+drivers and provider support, not a universal fan API. Fan names, provider and sensor IDs are
+retained; deduplication uses provider plus sensor ID, so equal labels or RPM do not collapse
+distinct sensors. A stopped fan remains 0 RPM; missing and invalid readings remain unavailable.
+This source contains no fan-control writes; mode choices are monitoring preferences.
+
+V3 evidence: `blob.pyw`, `glass.py`, `reactive.py`, `engine.py`, `V3-NOTES.md` and
+`.impeccable/surfaces/v3.md`. Preview art and telemetry are synthetic test fixtures, not new
+shipping assets. Provider fixtures and the reported local ASUS check are not multi-PC testing
+or certification. This documentation reconciliation adds no runtime validation claim.

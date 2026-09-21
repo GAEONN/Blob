@@ -1,5 +1,8 @@
 # Blob
 
+This checkout is the local **v3** refinement. See [V3-NOTES.md](V3-NOTES.md) for restored
+Music layouts, bubble changes, sensor fixes, verification, and compatibility limits.
+
 Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
 liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
 strip into one interface.

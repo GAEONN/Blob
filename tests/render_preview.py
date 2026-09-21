@@ -80,20 +80,24 @@ def main(output, gaming=False, errors=False):
     renderer.cap[:] = bg
     cards = []
     cases = [("Settings / regular", False, "settings", "now", 4, False),
+             ("Settings / shortcut", True, "settings", "now", 17, False),
              ("Settings / compact", True, "settings", "now", 10, False),
              ("Sound / conflict", False, "sound", "now", 0, True),
              ("Music / mini player", True, "music", "now", 0, False),
-             ("Music / volume panel", True, "music", "now", 0, False),
+             ("Music / v1 full player", False, "music", "now", 0, False),
              ("Music / player bubble", True, "music", "bubble", 0, False),
              ("Artwork / hover controls", True, "music", "art", 0, False),
              ("Artwork / options panel", True, "music", "art", 0, False),
              ("Hardware / card", False, "blob", "now", 0, False),
+             ("System / compact", True, "blob", "now", 0, False),
              ("Hardware / details", False, "blob", "details", 0, False),
              ("Hardware / mode bubble", False, "blob", "bubble", 0, False),
              ("Search", True, "music", "search", 0, False),
              ("Playing Next", False, "music", "queue", 0, False)]
     if gaming:
         cases = [("Gaming / regular — synthetic data", False, "gaming", "now", 0, False),
+                 ("Gaming / FPS bubble", False, "gaming", "bubble", 0, False),
+                 ("Gaming / unavailable bubble", False, "gaming", "bubble", 2, False),
                  ("Gaming / compact — synthetic data", True, "gaming", "now", 0, False),
                  ("Gaming / menu open — synthetic data", False, "gaming", "now", 1, False),
                  ("Gaming / no game focused", True, "gaming", "now", 2, False)]
@@ -109,6 +113,7 @@ def main(output, gaming=False, errors=False):
         if page == "blob":
             p.tabs_t = 0
         p.hardware_view = "bubble" if page == "blob" and view == "bubble" else "card"
+        p.gaming_view = "bubble" if page == "gaming" and view == "bubble" else "strip"
         if title == "Music / volume panel":
             p.music_menu = "volume"
         elif title == "Artwork / options panel":
@@ -148,7 +153,8 @@ def main(output, gaming=False, errors=False):
                     lens[key] /= p.SS
         renderer.set_lenses(lenses)
         bubble = ((page == "blob" and p.hardware_view == "bubble") or
-                  (page == "music" and p.music_view == "bubble"))
+                  (page == "music" and p.music_view == "bubble") or
+                  (page == "gaming" and p.gaming_view == "bubble"))
         renderer.set_panel_shape(1 if bubble else 0)
         audio = (.85, .55, .9) if page == "music" and p.music_view == "bubble" else (0, 0, 0)
         renderer.set_bubble_audio(*audio)
@@ -160,6 +166,9 @@ def main(output, gaming=False, errors=False):
         pixels = renderer.dib.arr[py - sp:py + height + sp].astype(np.float32)
         rgb = pixels[..., :3] + 30 * (1 - pixels[..., 3:4] / 255)
         img = Image.fromarray(np.clip(rgb[..., ::-1], 0, 255).astype(np.uint8))
+        # Individual native-scale captures keep review text legible, unlike a giant contact sheet.
+        destination = Path(output).parent / (Path(output).stem + "-" + str(len(cards)) + ".tmp.png")
+        img.save(destination)
         cards.append((title, img))
     columns, cell_h = (1, 235) if gaming else (3, renderer.H + 24) if errors else (4, renderer.H + 24)
     sheet = Image.new("RGB", (columns * renderer.W, ((len(cards) + columns - 1) // columns) * cell_h), (30, 30, 30))

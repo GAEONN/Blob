@@ -149,6 +149,7 @@ class GamingInputTests(unittest.TestCase):
     def test_same_hotkey_unlocks_hardware_bubble_for_dragging(self):
         a = self.app
         a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False)
+        a.hover = "hview:card"
         a.bubble_unlocked = False
         a.frame_dirty = False
         a.wndproc(101, blob.WM_HOTKEY, blob.GAMING_HOTKEY, 0)
@@ -174,7 +175,7 @@ class GamingInputTests(unittest.TestCase):
     def test_unlocked_bubble_distinguishes_click_from_drag(self):
         a = self.app
         a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
-                     hit=Mock(return_value="hcycle"))
+                     hit=Mock(return_value="hview:card"))
         a.bubble_unlocked, a.drag = True, None
         a.panel_local = Mock(return_value=(20, 20))
         a.click, a._schedule, a.frame = Mock(), Mock(), Mock()
@@ -185,7 +186,7 @@ class GamingInputTests(unittest.TestCase):
             a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
             a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
             a.wndproc(101, blob.WM_LBUTTONUP, 0, 0)
-        a.click.assert_called_once_with("hcycle", 0)
+        a.click.assert_called_once_with("hview:card", 0)
         self.assertEqual(a.pos, [100, 80])
 
         a.click.reset_mock()

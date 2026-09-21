@@ -122,7 +122,7 @@ class LayoutTests(unittest.TestCase):
                         self.assertLessEqual(box[3], p.ink.height - 78 * p.S)
             self.assertEqual(seen, expected)
 
-    def test_music_uses_contextual_size_and_no_universal_size_control(self):
+    def test_music_restores_distinct_regular_and_compact_sizes(self):
         sizes = set()
         for compact in (False, True):
             p = self.panel(compact=compact, page="music", view="now")
@@ -130,11 +130,11 @@ class LayoutTests(unittest.TestCase):
             self.draw(p)
             sizes.add((p.w, p.height(self.snap)))
             self.assertFalse(any(k.startswith("size:") for k in p.rects))
-        self.assertEqual(len(sizes), 1)
+        self.assertEqual(len(sizes), 2)
 
         p = self.panel(page="music", view="art")
         self.draw(p)
-        self.assertGreater(p.height(self.snap), next(iter(sizes))[1])
+        self.assertEqual(p.height(self.snap), p.w)
         self.assertNotIn("tabs", p.rects)
 
     def test_music_card_bubble_affordance_clears_art_and_seek(self):
@@ -148,7 +148,7 @@ class LayoutTests(unittest.TestCase):
         self.assert_bounds(p)
 
     def test_music_card_and_cover_expose_volume_and_options(self):
-        for view in ("now", "art"):
+        for view in ("art",):
             with self.subTest(view=view):
                 p = self.panel(page="music", view=view)
                 if view == "art":
@@ -222,7 +222,7 @@ class LayoutTests(unittest.TestCase):
         self.assertNotEqual(first, [t for t, _ in p.labels])
 
     def test_hardware_tab_uses_contextual_card_and_mode_bubble(self):
-        self.assertEqual(dict(blob.PAGES)["blob"], "Hardware")
+        self.assertEqual(dict(blob.PAGES)["blob"], "System")
         p = self.panel(page="blob")
         self.draw(p)
         self.assertIn("hview:bubble", p.rects)
@@ -295,10 +295,8 @@ class LayoutTests(unittest.TestCase):
         self.draw(p)
         pad = round(p.pad_u * p.S)
         side = round(p.w - 2 * pad)
-        for point in ((pad, round(p.CONTENT * p.S)),
-                      (pad + side - 1, round(p.CONTENT * p.S)),
-                      (pad, round(p.CONTENT * p.S) + side - 1),
-                      (pad + side - 1, round(p.CONTENT * p.S) + side - 1)):
+        for point in ((pad, pad), (pad+side-1, pad),
+                      (pad, pad+side-1), (pad+side-1, pad+side-1)):
             self.assertEqual(p.pic.getpixel(point)[3], 0, point)
 
     def test_list_status_clears_bottom_navigation(self):

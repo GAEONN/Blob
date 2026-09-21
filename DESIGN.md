@@ -1,5 +1,9 @@
 # Liquid Glass design system — build brief
 
+V3 scope: the native component notes below reconcile the approved refinement. They supersede
+older component sizing and interaction examples in this inherited browser build brief; the
+incumbent glass world and document structure remain in place. No web sidecar is generated.
+
 Hand this whole file to a new chat. It describes a working Windows design system (the **Blob** app in this repo) precisely enough to build a new
 app — a **web browser** — that looks and feels identical.
 
@@ -202,9 +206,9 @@ the window to capture animation states without touching the mouse.
 
 ## Components
 
-### Hardware card and mode bubble
+### System card and mode bubble
 
-The first view is named **Hardware**, not Blob. Its 340 DIP card keeps CPU/GPU thermals and the first
+The first view is named **System**. Its 340 DIP card keeps CPU/GPU thermals and the first
 two fan readings above the fold, followed by a five-part mode track. One context chevron expands a
 bounded, scrollable inventory that also includes every discovered fan. One unmarked top-right circle
 morphs the view into a 104 × 98 DIP mode bubble. Width, height, content and the signed-distance
@@ -218,22 +222,27 @@ The top and right edges remain anchored throughout the morph so the card's unmar
 appears to become the final bubble. One session-wide overlay state begins unlocked and survives
 page changes, hide/show cycles and transitions into Gaming. Only the configurable shortcut or tray
 command toggles it. Locked applies real cross-process input transparency to every view; unlocked
-restores controls and bubble dragging. Settings persists the modified key chord through
+restores controls and satellite dragging. Only the restore satellite is a bubble drag target
+and shows the move cursor; the main System lobe cycles modes. Settings persists the modified key chord through
 `RegisterHotKey`.
 
 ### Music player bubble
 
-Music repeats the contextual bubble language without inheriting Hardware's mode behavior. The
-mini-player reserves a clear top-right footprint for one unmarked circular affordance and shortens
-the seek line so neither metadata nor interaction targets collide with it. Activating it springs the
-card toward that top-right point while the signed-distance outline becomes the same fused two-lobe
-silhouette. With reactiveness enabled, the 28-band Sound spectrum is divided into bass, mid and
-treble envelopes: bass expands the main lobe, mids flex the smooth-union neck, and treble shifts and
-breathes the satellite. Each envelope has its own critically restrained spring and shader limits
-keep the visible deformation within the original interaction geometry. When routed DSP spectrum is
-unavailable, peak meters across every active Windows render endpoint drive compressed level and
-transient envelopes, so Spotify, browsers, per-app routing and other sessions still respond without
-enabling Sound enhancement or relying on a player's sometimes-stale transport status.
+Music repeats the contextual bubble language without inheriting System's mode behavior.
+Regular uses the cover-first composition: 340 × 582 DIP, 22 DIP side padding and 296 DIP square
+artwork. Compact uses 248 × 216 DIP, 14 DIP side padding and a 54 DIP square thumbnail with a
+6 DIP continuous corner. Regular metadata is 18/13 DIP; Compact metadata is 13/11 DIP.
+The filled previous/play/next controls have radii 24/32/24 DIP in Regular and 15/21/15 DIP
+in Compact, with previous/next centers offset 74 and 51 DIP respectively from the center.
+Both retain Shuffle, Repeat, Search and Playing Next. Regular places volume below transport;
+Compact places its seek line below the thumbnail/metadata row. The optional bubble preserves
+the existing fused two-lobe spring morph.
+
+**Relative-accent rule.** `reactive.py` measures change against a recent baseline, so sustained
+loudness settles instead of holding the glass inflated. Available DSP bands supply bass, mid
+and treble; otherwise endpoint peak amplitude feeds all three envelopes equally. The fallback
+does not measure frequency bands or invent beats. Existing independent springs and shader
+bounds carry main-lobe, neck and satellite motion. Full-cover mode uses local visualizer bars instead.
 
 The large lobe is a compact transport surface: one tap toggles playback after the double-click
 window, a second tap advances, and a 520 ms hold goes to the previous track. The attached lobe wins
@@ -242,11 +251,24 @@ The main lobe never becomes a drag target. A short gesture explanation belongs i
 the bubble itself remains unlabelled. Its drag behavior follows the same global overlay state as
 every other view.
 
-In both card and cover modes, Volume and Options are stable edge buttons around the transport row.
+In full-cover mode, Volume and Options are stable edge buttons around the transport row.
 Opening either uses the existing row as an inline utility surface instead of growing another panel:
 Volume shows the system-volume slider; Options shows Search, Playing Next, the reactive equalizer
 toggle, Shuffle and Repeat. The
 three-button previous/play-next transport returns when the utility is closed.
+
+**Equal-rim rule.** Full cover is 340 × 340 DIP even in Compact, with artwork inset 4 DIP
+on every side (332 × 332 DIP). Its inner corner follows outer radius minus inset. The return
+control is always present over its own dark backing, including on white artwork. Artwork ink
+uses composited-cover luminance rather than the desktop behind it. The cover, glass outline and
+controls stay stationary. The visualizer button toggles bars inside the cover: real DSP bins when
+available, otherwise a uniform endpoint-amplitude meter, never fabricated frequency bands.
+
+**Whole-row settings rule.** Labels and hints wrap before row heights are computed; scrolling
+advances by complete rows. A section heading stays with its first setting. The shortcut gets
+a separate full-width 30 DIP input row with wrapped explanation beneath it. Regular/Compact
+setting labels use 14/13 DIP, notes 11 DIP, hints 10 DIP; these are component measurements,
+not a new global type ramp.
 
 ### Gaming strip and Playing Next extension
 
@@ -259,6 +281,12 @@ RAM percentage/used memory, fan RPM and GPU power/power-source hint. The left me
 reveals the existing spring-animated switcher, adding 56 DIP of height. Dragging
 and clicking the strip preserve foreground focus. It reuses refractive glass,
 continuous corners, adaptive ink and the existing warm temperature warnings.
+
+**Satellite-only move rule.** Gaming optionally contracts to a 104 × 98 DIP bubble with
+24 DIP FPS numerals, a 10 DIP FPS label and 11 DIP frame time in ms. Its restore satellite
+returns to the strip or drags while unlocked. Across System, Music and Gaming bubbles, only
+the satellite shows a move cursor; main lobes retain their content/gestures. Settings exposes
+Strip / FPS bubble. Unavailable FPS and ms stay dashes.
 
 **Unknown-stays-unknown rule.** Unavailable metrics use dashes or explicit sensor
 and setup hints. FPS/frame time describe application presentation intervals, not
@@ -273,3 +301,13 @@ update matching title/artist identities. Rows retain existing hover glass,
 ellipsized text and optional covers: 42 DIP regular rows include artist captions,
 while 34 DIP Compact rows show titles only. Selecting a row targets its title and
 artist in Apple Music rather than relying on a stale queue index.
+
+V3 source check: `blob.pyw` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
+`reactive.py` (relative transients), `engine.py` (provider/ID and zero-RPM preservation),
+`V3-NOTES.md` and `.impeccable/surfaces/v3.md`. Preview artwork is synthetic test material;
+no new shipping raster or multi-PC validation is claimed. Provider and fan-control limits
+remain product facts in PRODUCT.md.
+
+Not canonized or repaired: the inherited browser roadmap, noncanonical section structure,
+system display faces and glyph-icon prescriptions remain pre-existing drift/defects outside
+this component reconciliation; their presence is not approval for new surfaces to inherit them.

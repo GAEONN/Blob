@@ -405,6 +405,7 @@ void main() {
     }
 
     // ── glass spectrum: each bar is a small capsule lens ──
+    float viz_coverage = 0.0;
     if (viz_alpha > 0.0 && viz_rect.z > viz_rect.x && pp.x > viz_rect.x && pp.x < viz_rect.z
             && pp.y > viz_rect.y && pp.y < viz_rect.w) {
         float pitch = (viz_rect.z - viz_rect.x) / 28.0;
@@ -417,6 +418,7 @@ void main() {
         float dist = length(q);
         float din = r - dist;
         float cov = clamp(din + 0.5, 0.0, 1.0) * viz_alpha;
+        viz_coverage = cov;
         if (cov > 0.0) {
             vec2 n = dist > 1e-3 ? q / dist : vec2(0.0);
             float tt = clamp(1.0 - din / (r * 0.95), 0.0, 1.0);
@@ -467,7 +469,11 @@ void main() {
     col += spec + 0.03;
     col -= rim * 0.22 * dark;
 
-    vec3 ink_col = mix(vec3(1.0), vec3(0.07), dark);
+    // Album artwork is opaque: text must contrast with the cover, not the desktop.
+    float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);
+    vec3 ink_col = mix(vec3(1.0), vec3(0.07), ink_dark);
+    // Opaque covers hide desktop refraction: retain readable frosted bars above art.
+    col = mix(col, ink_col, viz_coverage * pic.a * .72);
     col = mix(col, ink_col, fill * 0.85);
     float ia = mix(inkAt(ink0, ink0_size, pp), inkAt(ink1, ink1_size, pp), fade);
     col = mix(col, ink_col, ia);
