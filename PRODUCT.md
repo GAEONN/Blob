@@ -27,14 +27,16 @@ Windows app is already installed.
 - Mini-card and cover modes share two stable utility anchors: Volume on the left and Options on the
   right. Each replaces only the middle control row—Volume with a system slider, Options with Search,
   Playing Next, Shuffle and Repeat—so the surface gains capability without permanent clutter.
-- The player bubble breathes subtly with the live audio spectrum. Its main lobe supports tap to
+- The player bubble visibly breathes with live system audio. Its main lobe supports tap to
   play or pause, double-tap for next, and hold for previous; its attached satellite restores the
-  Music card. Playback comes from the current Windows media session and remains service-neutral.
+  Music card on click and repositions the bubble when dragged. Playback comes from the current
+  Windows media session and remains service-neutral.
   The shared overlay shortcut controls the same lock state on every tab.
 - Reactiveness is enabled by default and persisted through the equalizer toggle in Music Options or
   the matching Settings switch. Bass deforms the main lobe, mids flex the fused neck and treble
   moves the satellite. Springs and hard shader bounds preserve click geometry. When DSP spectrum is
-  unavailable, a read-only Windows endpoint peak meter supplies an amplitude-reactive fallback.
+  unavailable, read-only peak meters across all active Windows playback endpoints supply an
+  amplitude-reactive fallback without trusting a potentially stale player transport status.
 
 ## Shared overlay lock
 

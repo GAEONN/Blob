@@ -150,7 +150,8 @@ def main(output, gaming=False, errors=False):
         bubble = ((page == "blob" and p.hardware_view == "bubble") or
                   (page == "music" and p.music_view == "bubble"))
         renderer.set_panel_shape(1 if bubble else 0)
-        renderer.set_bubble_pulse(.6 if page == "music" and p.music_view == "bubble" else 0)
+        audio = (.85, .55, .9) if page == "music" and p.music_view == "bubble" else (0, 0, 0)
+        renderer.set_bubble_audio(*audio)
         renderer.set_viz([v / p.SS for v in viz] if viz else None, np.linspace(.2, .9, 28), 1)
         height = round(p.height(snap) / p.SS)
         with patch.object(glass.user32, "UpdateLayeredWindow", return_value=True):

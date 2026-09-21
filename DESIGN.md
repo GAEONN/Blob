@@ -231,14 +231,16 @@ silhouette. With reactiveness enabled, the 28-band Sound spectrum is divided int
 treble envelopes: bass expands the main lobe, mids flex the smooth-union neck, and treble shifts and
 breathes the satellite. Each envelope has its own critically restrained spring and shader limits
 keep the visible deformation within the original interaction geometry. When routed DSP spectrum is
-unavailable, the default Windows render endpoint's peak meter drives level and transient envelopes,
-so Spotify, browsers and other sessions still respond without enabling Sound enhancement.
+unavailable, peak meters across every active Windows render endpoint drive compressed level and
+transient envelopes, so Spotify, browsers, per-app routing and other sessions still respond without
+enabling Sound enhancement or relying on a player's sometimes-stale transport status.
 
 The large lobe is a compact transport surface: one tap toggles playback after the double-click
 window, a second tap advances, and a 520 ms hold goes to the previous track. The attached lobe wins
-hit testing in the fused neck and restores the full card. A short gesture explanation belongs in
-Music settings so the bubble itself remains unlabelled. Its drag behavior follows the same global
-overlay state as every other view.
+hit testing in the fused neck: click restores the full card, while click-drag repositions the bubble.
+The main lobe never becomes a drag target. A short gesture explanation belongs in Music settings so
+the bubble itself remains unlabelled. Its drag behavior follows the same global overlay state as
+every other view.
 
 In both card and cover modes, Volume and Options are stable edge buttons around the transport row.
 Opening either uses the existing row as an inline utility surface instead of growing another panel:

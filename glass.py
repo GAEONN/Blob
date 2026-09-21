@@ -238,18 +238,19 @@ float sdPanel(vec2 p) {
     // the card is contracting instead of appearing only after the resize.
     float u = min(panel_size.x / 104.0, panel_size.y / 98.0);
     float bass = bubble_audio.x, mid = bubble_audio.y, treble = bubble_audio.z;
-    vec2 main_c = panel_size * vec2(43.0 / 104.0, 55.0 / 98.0);
+    vec2 main_c = panel_size * vec2(43.0 / 104.0, 55.0 / 98.0) +
+                  vec2(0.0, -4.0 * bass * u);
     vec2 nub_c = panel_size * vec2(79.5 / 104.0, 22.5 / 98.0) +
-                 vec2((-1.4 * mid + .5 * treble) * u, (1.2 * mid - 1.2 * treble) * u);
+                 vec2((-2.2 * mid - 1.8 * treble) * u, (1.5 * mid + 1.8 * treble) * u);
     // Bass makes the body inhale vertically; mids pull the lobes together and
     // thicken their liquid neck; treble gives the satellite a quick response.
     vec2 main_q = p - main_c;
-    main_q /= vec2(1.0 + .018 * mid, 1.0 + .050 * bass);
+    main_q /= vec2(1.0 + .030 * mid, 1.0 + .100 * bass);
     vec2 nub_q = p - nub_c;
-    nub_q /= vec2(1.0 + .022 * treble, 1.0 + .035 * treble);
-    float a = length(main_q) - (39.0 + 2.4 * bass + .7 * mid) * u;
-    float b = length(nub_q) - (21.5 + 1.0 * treble) * u;
-    float k = (9.0 + 3.0 * mid + .5 * bass) * u;
+    nub_q /= vec2(1.0 + .035 * treble, 1.0 + .055 * treble);
+    float a = length(main_q) - (39.0 + 2.0 * bass + 1.0 * mid) * u;
+    float b = length(nub_q) - (21.5 + 1.4 * treble) * u;
+    float k = (9.0 + 5.0 * mid + 1.0 * bass) * u;
     float h = max(k - abs(a - b), 0.0) / max(k, 1e-3);
     float bubble = min(a, b) - h * h * k * 0.25;
     float t = smoothstep(0.0, 1.0, clamp(panel_morph, 0.0, 1.0));

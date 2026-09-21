@@ -74,14 +74,16 @@ The mini player's unmarked corner circle morphs the card into an audio-reactive 
 bass expands the main body, mids flex the liquid neck, and treble animates the restore satellite.
 The response is spring-smoothed and bounded so the bubble never escapes its stable hit targets.
 The equalizer control in Music Options—or **Reactive music bubble** in Settings—toggles it. A
-lightweight Windows endpoint meter keeps amplitude response working when Blob's optional Sound
-enhancement is off; the routed Sound spectrum provides true frequency-band detail when available.
+lightweight Windows meter watches every active playback endpoint, keeping amplitude response working
+when Blob's optional Sound enhancement is off or an app is routed away from the default device; the
+routed Sound spectrum provides true frequency-band detail when available.
 The bubble is
 anchored to the card's top-right corner. Tap the large lobe to play or pause, double-tap it for the
-next track, or hold it for the previous track. Select the small attached lobe to restore the card.
+next track, or hold it for the previous track. Click the small attached lobe to restore the card, or
+drag that satellite to reposition the bubble.
 These controls use the active Windows media session, so they are not tied to Apple Music. The same
-editable overlay shortcut controls one shared lock state for every tab. While unlocked, either
-bubble can be dragged; lock Blob to pass pointer input through the overlay.
+editable overlay shortcut controls one shared lock state for every tab. While unlocked, Hardware's
+body and Music's satellite are drag surfaces; lock Blob to pass pointer input through the overlay.
 
 Settings also holds **Include Blob in screenshots and recordings**. Off (the default) keeps the
 pane invisible to capture so the glass can refract live. On makes it visible to capture tools, at

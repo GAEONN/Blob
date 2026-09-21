@@ -167,14 +167,16 @@ every COM/device call on a worker thread.
 * Music also owns an unmarked contextual corner circle. Keep its footprint clear of metadata and the
   seek target, then spring the mini player continuously into an audio-reactive fused bubble anchored
   at that corner. The main lobe uses tap for play/pause, double-tap for next and hold for previous;
-  the attached satellite restores the mini player. Add the gesture legend to Music settings rather
-  than labelling the bubble itself. Bubble dragging follows the global overlay lock state.
+  clicking the attached satellite restores the mini player and dragging that satellite repositions
+  the bubble. Never turn the main lobe into a drag target. Add the gesture legend to Music settings
+  rather than labelling the bubble itself. Bubble dragging follows the global overlay lock state.
 * In Music card and cover modes, flank the default previous/play-next row with Volume and Options.
   Volume swaps the middle row for the system-volume slider; Options swaps it for Search, Playing
   Next, a persisted reactive-bubble equalizer toggle, Shuffle and Repeat. Keep the two edge anchors
   visible while either inline utility is open. When enabled, map spectrum bass/mids/treble to the
-  main lobe, fused neck and satellite through separate bounded springs. Use the default Windows
-  endpoint peak as a truthful amplitude fallback when the optional DSP spectrum is unavailable.
+  main lobe, fused neck and satellite through separate bounded springs. Use the strongest live peak
+  across all active Windows playback endpoints as a truthful amplitude fallback when the optional
+  DSP spectrum is unavailable; do not gate it on player-reported transport state.
 * Hardware owns a contextual 104 × 98 mode bubble instead of inheriting the universal compact
   layout. Its card affordance is one unmarked glass circle. The card's width, height, crossfaded
   content and signed-distance silhouette must spring continuously into the bubble, which is the

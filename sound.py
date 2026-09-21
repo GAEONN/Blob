@@ -246,11 +246,12 @@ class Sound:
     def _worker(self):
         import comtypes
         from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
+        from pycaw.constants import DEVICE_STATE, EDataFlow
         try:
             comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
         except OSError:
             pass  # COM already initialised on this thread
-        last_watch, meter = 0.0, None
+        last_watch, meters = 0.0, []
         while True:
             try:
                 job, arg = self.jobs.get(timeout=0.05 if self.reactive_active else 0.5)
@@ -283,18 +284,30 @@ class Sound:
                     last_watch = time.time()
                     self._watch()
                     if self.reactive_active:
-                        meter = None  # follow default-device changes without polling COM every frame
+                        # Follow both default-device and per-app routing changes.
+                        # Keep the device/interface references alive alongside
+                        # each meter; some COM drivers release child interfaces
+                        # when their parent wrapper is collected.
+                        meters = []
+                        for device in AudioUtilities.GetAllDevices(
+                                EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value):
+                            try:
+                                iface = device._dev.Activate(
+                                    IAudioMeterInformation._iid_, comtypes.CLSCTX_ALL, None)
+                                meters.append((device, iface, iface.QueryInterface(IAudioMeterInformation)))
+                            except Exception:
+                                pass
                 if self.reactive_active:
                     try:
-                        if meter is None:
+                        if not meters:
                             device = AudioUtilities.GetSpeakers()
                             iface = device._dev.Activate(
                                 IAudioMeterInformation._iid_, comtypes.CLSCTX_ALL, None)
-                            meter = iface.QueryInterface(IAudioMeterInformation)
-                        peak = float(meter.GetPeakValue())
+                            meters = [(device, iface, iface.QueryInterface(IAudioMeterInformation))]
+                        peak = max(float(meter.GetPeakValue()) for _, _, meter in meters)
                         self.reactive_peak = max(peak, self.reactive_peak * .68)
                     except Exception:
-                        meter = None
+                        meters = []
                         self.reactive_peak *= .72
                 else:
                     self.reactive_peak *= .72

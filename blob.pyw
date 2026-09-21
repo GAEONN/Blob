@@ -1742,7 +1742,18 @@ class App:
 
     @property
     def bubble_drag_active(self):
-        return self.visible and self.bubble_mode and self.overlay_unlocked
+        if not (self.visible and self.bubble_mode and self.overlay_unlocked):
+            return False
+        # Hardware's whole bubble is a click-or-drag surface.  Music keeps the
+        # main lobe for playback gestures and uses only its satellite as the
+        # click-or-drag handle.
+        return (self.panel.page != "music" or self.hover == "mview:now" or
+                self.drag_click == "mview:now")
+
+    def bubble_drag_key(self, key):
+        if not (self.visible and self.bubble_mode and self.overlay_unlocked and key):
+            return False
+        return self.panel.page != "music" or key == "mview:now"
 
     @property
     def overlay_lock_available(self):
@@ -2066,7 +2077,10 @@ class App:
         mid = self.springs.get("music_mid", 0.0, k=155, zeta=.72)
         treble = self.springs.get("music_treble", 0.0, k=220, zeta=.74)
         reactive = bool(self.panel.options.get("musicreactive", True))
-        reactive_live = bool(music_morph.target and reactive and self.media.playing)
+        # Measure the actual output instead of trusting a player's transport
+        # status. Browsers and several Spotify/YouTube integrations can keep a
+        # valid media session while reporting a stale paused/opened state.
+        reactive_live = bool(music_morph.target and reactive)
         if hasattr(self.sound, "set_reactive_active"):
             self.sound.set_reactive_active(reactive_live)
         if reactive_live:
@@ -2084,11 +2098,15 @@ class App:
                 # Endpoint peak remains available when Blob's optional DSP route
                 # is off. Transients drive the quicker lobes; level drives body.
                 peak = min(1.0, max(0.0, float(getattr(self.sound, "reactive_peak", 0.0))))
-                transient = max(0.0, peak - self.music_peak_prev)
-                self.music_peak_prev += (peak - self.music_peak_prev) * .28
-                bass.target = min(1.0, peak ** .62)
-                mid.target = min(1.0, peak * .72 + transient * 2.2)
-                treble.target = min(1.0, peak * .24 + transient * 5.0)
+                # Endpoint meters are post-volume and frequently report only a
+                # few hundredths. Compress that range so normal listening
+                # levels still produce an obvious but bounded liquid response.
+                level = min(1.0, max(0.0, (peak - .002) * 5.0)) ** .55
+                transient = max(0.0, level - self.music_peak_prev)
+                self.music_peak_prev += (level - self.music_peak_prev) * .28
+                bass.target = level
+                mid.target = min(1.0, level * .62 + transient * 1.8)
+                treble.target = min(1.0, level * .20 + transient * 4.2)
         else:
             bass.target = mid.target = treble.target = 0.0
             self.music_peak_prev *= .8
@@ -2548,15 +2566,15 @@ class App:
             if msg == WM_LBUTTONDOWN:
                 x, y = self.panel_local(lp)
                 h = self.panel.hit(x, y)
-                if h and self.bubble_drag_active:
+                if h == "mbubble:gesture":
+                    self.start_music_bubble_press()
+                elif self.bubble_drag_key(h):
                     cx, cy = cursor_pos()
                     self.drag = (cx - self.pos[0], cy - self.pos[1])
                     self.drag_click = h
                     self.drag_origin = (cx, cy)
                     self.drag_moved = False
                     user32.SetCapture(hwnd)
-                elif h == "mbubble:gesture":
-                    self.start_music_bubble_press()
                 elif h:
                     self.pressed = h
                     self.click(h, x)
