@@ -126,6 +126,25 @@ class LayoutTests(unittest.TestCase):
                         self.assertNotIn("gview:horizontal", p.rects)
                         self.assertIn("gview:bubble", p.rects)
 
+    def test_tool_headers_mirror_the_minimize_close_rail_with_monitor_side(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tools = ToolController(Path(folder) / "tools.json")
+            for side in ("left", "right"):
+                with self.subTest(side=side):
+                    p = self.panel(page="blob")
+                    p.tools_open, p.tool_view, p.anchor_side = True, "calculator", side
+                    p.update_width()
+                    self.draw(p, tools=tools)
+                    minimize = p.rects["tool:minimize"]
+                    close = p.rects["tool:close"]
+                    if side == "left":
+                        self.assertLess((minimize[0] + minimize[2]) / 2, p.w / 2)
+                        self.assertLess((close[0] + close[2]) / 2, p.w / 2)
+                    else:
+                        self.assertGreater((minimize[0] + minimize[2]) / 2, p.w / 2)
+                        self.assertGreater((close[0] + close[2]) / 2, p.w / 2)
+                    self.assert_bounds(p)
+
     def test_gaming_compact_is_independent_from_orientation_and_menu_side(self):
         self.assertEqual(blob.normalize_gaming_view("bubble"), "bubble")
         for view in ("horizontal", "vertical"):
@@ -594,6 +613,25 @@ class RendererTests(unittest.TestCase):
             grab.assert_called_once()
             cam.grab.assert_not_called()
 
+    def test_capture_throttles_dragged_geometry_to_the_refresh_interval(self):
+        renderer = glass.GlassRenderer.__new__(glass.GlassRenderer)
+        renderer.sp, renderer.M = 8, 12
+        renderer.cap = np.zeros((96, 160, 4), np.uint8)
+        renderer.panel_y = lambda height: 0
+        renderer._last_key = None
+        renderer._last_capture = 0.0
+        renderer.capture_min_interval = 1 / 60
+        renderer._bg_dirty = False
+        renderer.stats = {}
+        renderer.source = NS(grab=Mock(return_value=True))
+        with patch.object(glass.time, "perf_counter",
+                          side_effect=[1.0, 1.0, 1.0, 1.005, 1.005,
+                                       1.018, 1.018, 1.018]):
+            self.assertTrue(renderer.capture(0, 0, 120, 80))
+            self.assertFalse(renderer.capture(5, 0, 120, 80))
+            self.assertTrue(renderer.capture(8, 0, 120, 80))
+        self.assertEqual(renderer.source.grab.call_count, 2)
+
 
 class HardwareTests(unittest.TestCase):
     def test_rest_sensor_tree_extracts_temperatures_and_named_fans(self):
@@ -631,6 +669,93 @@ class HardwareTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    @staticmethod
+    def gaming_drag_app(view="horizontal", side="right", pos=None):
+        class FakeGlass:
+            sp, W, H = 28, 680, 900
+
+            def __init__(self, panel_side):
+                self.panel_side = panel_side
+
+            def panel_x(self, width):
+                return self.sp if self.panel_side == "left" else self.W-self.sp-round(width)
+
+            def panel_y(self, height):
+                return self.H-self.sp-round(height)
+
+            def set_panel_side(self, panel_side):
+                self.panel_side = panel_side
+
+        app = blob.App.__new__(blob.App)
+        app.S, app.ss = 1.0, blob.Panel.SS
+        app.panel = blob.Panel(1)
+        app.panel.page, app.panel.gaming_view = "gaming", view
+        app.panel.gaming_restore_view = view
+        app.panel.anchor_side = side
+        app.panel.update_width()
+        app.panel_side = side
+        app.glass = FakeGlass(side)
+        app.snap = fixtures()[0]
+        app.springs = blob.Springs()
+        app.springs.get("width", app.panel.w, k=240, zeta=.90)
+        app.springs.get("height", app.panel.height(app.snap), k=320, zeta=.86)
+        app.springs.get("hardware_morph", 0.0, k=220, zeta=.86)
+        app.pos = list(pos or (72, -758))
+        app.visible, app.full, app.drag = True, False, None
+        app.drag_work = None
+        app.gaming_dock_edge = None
+        app.frame_dirty, app.pinned = False, True
+        app.draw_content, app.old_page_springs = Mock(), Mock()
+        return app
+
+    def test_panel_work_area_clamp_keeps_the_full_glass_and_action_rail_visible(self):
+        app = self.gaming_drag_app(pos=(1600, 1000))
+        work = NS(left=0, top=0, right=1600, bottom=900)
+        with patch.object(blob, "work_area_at", return_value=(work, None)):
+            self.assertTrue(app.keep_panel_in_work_area())
+        x, y, width, height = app._panel_screen_rect()
+        guard = app.glass.sp + 1
+        self.assertGreaterEqual(x-guard, work.left)
+        self.assertGreaterEqual(y-guard, work.top)
+        self.assertLessEqual(x+width+guard, work.right)
+        self.assertLessEqual(y+height+guard, work.bottom)
+
+    def test_tabs_texture_updates_are_coalesced_while_the_spring_stays_live(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = NS(tabs_t=0.0)
+        app._tabs_texture_at = 0.0
+        tabs = NS(x=.18, moving=True)
+        self.assertTrue(app._sync_tabs_texture(1.0, tabs))
+        tabs.x = .40
+        self.assertFalse(app._sync_tabs_texture(1.01, tabs))
+        self.assertTrue(app._sync_tabs_texture(1.0 + blob.TAB_TEXTURE_SECONDS + .001, tabs))
+        tabs.x, tabs.moving = 1.0, False
+        self.assertTrue(app._sync_tabs_texture(1.0 + 2 * blob.TAB_TEXTURE_SECONDS + .002, tabs))
+        self.assertEqual(app.panel.tabs_t, 1.0)
+
+    def test_gaming_edge_drop_maps_top_to_horizontal_and_sides_to_vertical(self):
+        work = NS(left=0, top=0, right=1600, bottom=900)
+        top = self.gaming_drag_app(view="horizontal", pos=(72, -758))
+        with patch.object(blob, "work_area_at", return_value=(work, None)), \
+                patch.object(blob.engine, "load_config", return_value={}), \
+                patch.object(blob.engine, "save_config"):
+            self.assertTrue(top.settle_gaming_edge_dock())
+        self.assertEqual((top.gaming_dock_edge, top.panel.gaming_view), ("top", "horizontal"))
+        self.assertAlmostEqual(top._panel_screen_rect()[1], top.glass.sp + 1)
+
+        side = self.gaming_drag_app(view="horizontal", pos=(1, -658))
+        with patch.object(blob, "work_area_at", return_value=(work, None)), \
+                patch.object(blob.engine, "load_config", return_value={}), \
+                patch.object(blob.engine, "save_config"):
+            self.assertTrue(side.settle_gaming_edge_dock())
+        self.assertEqual((side.gaming_dock_edge, side.panel.gaming_view, side.panel_side),
+                         ("left", "vertical", "left"))
+        side.springs["width"].x = side.panel.w
+        side.springs["height"].x = side.panel.height(side.snap)
+        with patch.object(blob, "work_area_at", return_value=(work, None)):
+            side.maintain_gaming_edge_dock()
+        self.assertAlmostEqual(side._panel_screen_rect()[0], side.glass.sp + 1)
+
     def test_hardware_view_change_springs_geometry_and_shape(self):
         app = blob.App.__new__(blob.App)
         app.panel = blob.Panel(1)

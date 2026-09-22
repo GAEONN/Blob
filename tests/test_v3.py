@@ -142,6 +142,10 @@ class V3LayoutTests(unittest.TestCase):
             self.assertNotIn('gview:restore', p.rects)
             p.tool_reveal = 1.0
             self.draw(p)
+            self.assertEqual(p.w, p.BUBBLE_W * p.S)
+            self.assertEqual(p.height(self.snap), p.BUBBLE_H * p.S)
+            self.assertFalse(p.tool_arcs)
+            self.assertFalse(any(key.startswith('tool:') for key in p.rects))
             self.assertIn('gview:restore', p.rects)
 
     def test_settings_all_text_boxes_have_vertical_clearance(self):

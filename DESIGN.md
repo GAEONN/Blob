@@ -296,7 +296,10 @@ of height and anchoring its resting pill to the left or right monitor edge. The 
 shares the strip's top edge and keeps an inset restore satellite; it remembers whether the
 user came from Horizontal or Vertical. All three states preserve foreground focus, refractive
 glass, continuous corners, adaptive ink and warm temperature warnings. Unavailable FPS and ms
-stay dashes.
+stay dashes. A free strip dropped at the top work-area edge resolves to Horizontal; one dropped
+at a left or right work-area edge resolves to Vertical and uses that side as its control rail.
+During a monitor transfer, a short hysteresis gutter prevents the shell from switching displays
+at the seam; its visible bounds, shadow and every action stay inside the adopted work area.
 
 **Unknown-stays-unknown rule.** Unavailable metrics use dashes or explicit sensor
 and setup hints. FPS/frame time describe application presentation intervals, not
@@ -353,7 +356,8 @@ Clipboard uses the calculator's 420 × 748 DIP card contract: the same stable he
 rail, frosted segmented switcher, generous current-item preview, rounded list rows,
 and monitor-safe expansion/retraction. It scales and clamps as one card on every
 monitor, including negative-coordinate displays and taskbar work areas; its Close and
-Minimize actions remain in the same header positions as Calculator.
+Minimize actions remain in the same mirrored header rail as Calculator, on the edge where
+the card retracts into its originating bubble.
 
 The session is local and memory-only. Blob retains up to 24 recent text snippets, file
 sets, and self-contained DIB images while it is running; nothing is saved into Blob
@@ -371,7 +375,8 @@ can be recovered. Clearing removes only unpinned entries from the active session
 The calculator keeps the reference's six-column scientific block above a four-column
 numeric keypad, with a larger right-aligned result. Its default canvas is 420 × 748 DIP;
 Basic uses 512 DIP height, Math Notes/History 600, and Convert 612. The main header keeps
-History, New, Minimize and Close in stable positions. The mode popover offers Basic,
+History, New, Minimize and Close in stable mirrored positions, with the Minimize/Close rail
+facing the current monitor edge. The mode popover offers Basic,
 Scientific, Math Notes and Convert, blocks controls underneath, and uses the shared glass
 fade/morph. Addition is muted green, subtraction red and equals amber; keys are frosted,
 the surrounding shell remains Blob glass. Other pages and the main bubble are unchanged.

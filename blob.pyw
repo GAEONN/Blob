@@ -99,7 +99,7 @@ user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctyp
 
 WM_DESTROY, WM_ACTIVATE, WM_SETCURSOR, WM_KEYDOWN, WM_TIMER = 0x02, 0x06, 0x20, 0x100, 0x113
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_CAPTURECHANGED = 0x200, 0x201, 0x202, 0x215
-WM_DPICHANGED = 0x02E0
+WM_SETTINGCHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED = 0x1A, 0x7E, 0x02E0
 WM_APP_TOGGLE, WM_APP_EXIT, WM_APP_REFOCUS = 0x8001, 0x8002, 0x8003
 WM_APP_GAMING_LOCK, WM_HOTKEY, GAMING_HOTKEY = 0x8004, 0x312, 1
 WS_EX_TRANSPARENT, WS_EX_NOACTIVATE = 0x20, 0x08000000
@@ -111,6 +111,12 @@ DUAL_CONTROL_LABEL = "Left Ctrl + Right Ctrl"
 BUBBLE_LINGER_SECONDS = 3.0
 BUBBLE_PROXIMITY_K = 190.0
 BUBBLE_PROXIMITY_ZETA = 0.92
+GAMING_EDGE_DOCK_DIP = 30
+DRAG_MONITOR_TRANSFER_DIP = 24
+# Present at a stable 60 FPS.  Expensive Pillow texture updates are coalesced
+# separately so they cannot starve the compositor while a menu spring moves.
+FRAME_PACING_SECONDS = 1.0 / 60.0
+TAB_TEXTURE_SECONDS = 1.0 / 30.0
 
 # Bubble bodies are intentionally clean glass.  Their hit rectangles remain
 # active, but the hover lens would add a second frosted circle over the SDF
@@ -240,6 +246,35 @@ def rect_gap(x, y, rect):
     dx = max(rect[0] - x, 0, x - rect[2])
     dy = max(rect[1] - y, 0, y - rect[3])
     return (dx * dx + dy * dy) ** 0.5
+
+
+def work_rect_key(work):
+    """A stable monitor-work-area identity without depending on ctypes equality."""
+    return tuple(int(getattr(work, key)) for key in ("left", "top", "right", "bottom"))
+
+
+def point_outside_work_area(x, y, work):
+    """Distance outside a monitor work area (zero while the cursor is inside it)."""
+    dx = max(float(work.left) - x, 0.0, x - float(work.right))
+    dy = max(float(work.top) - y, 0.0, y - float(work.bottom))
+    return math.hypot(dx, dy)
+
+
+def gaming_dock_edge(panel_rect, work, threshold):
+    """Return the deliberate Gaming drop edge, or None outside the edge gutter.
+
+    The top wins an exact corner tie. That makes a deliberate pull into the
+    top edge reliably produce the horizontal strip instead of a surprise
+    vertical stack.
+    """
+    x, y, width, _ = panel_rect
+    distances = (
+        (abs(y - float(work.top)), 0, "top"),
+        (abs(x - float(work.left)), 1, "left"),
+        (abs(float(work.right) - (x + width)), 2, "right"),
+    )
+    distance, _, edge = min(distances)
+    return edge if distance <= max(0.0, float(threshold)) else None
 
 
 class TRACKMOUSEEVENT(ctypes.Structure):
@@ -574,12 +609,7 @@ class Panel:
             width = self.MAGNIFIER_W if self.tool_view == "magnifier" else self.TOOL_W
             if self.tool_view in ("calculator", "clipboard", "blank"):
                 width *= self.tool_size_scale
-        elif self.tool_reveal > .06 and (
-                (self.page == "blob" and self.hardware_view == "bubble") or
-                (self.page == "music" and self.music_view == "bubble") or
-                (self.page == "sound" and self.sound_view == "bubble") or
-                (self.page == "gaming" and self.gaming_view == "bubble") or
-                (self.page == "settings" and self.settings_view == "bubble")):
+        elif self.tool_reveal > .06 and self.tool_palette_available():
             width = self.TOOL_PALETTE_W
         elif ((self.page == "blob" and self.hardware_view == "bubble") or
                 (self.page == "music" and self.music_view == "bubble") or
@@ -607,11 +637,7 @@ class Panel:
             if self.tool_view in ("calculator", "clipboard", "blank"):
                 return round(self.tool_card_height() * self.S * self.tool_size_scale)
             return round((self.MAGNIFIER_H if self.tool_view == "magnifier" else self.TOOL_H) * self.S)
-        if self.tool_reveal > .06 and ((self.page == "blob" and self.hardware_view == "bubble") or
-                                       (self.page == "music" and self.music_view == "bubble") or
-                                       (self.page == "sound" and self.sound_view == "bubble") or
-                                       (self.page == "gaming" and self.gaming_view == "bubble") or
-                                       (self.page == "settings" and self.settings_view == "bubble")):
+        if self.tool_reveal > .06 and self.tool_palette_available():
             return round(self.TOOL_PALETTE_H * self.S)
         if page == "blob" and self.hardware_view == "bubble":
             return round(self.BUBBLE_H * self.S)
@@ -649,6 +675,20 @@ class Panel:
         base = 152 if c else 292
         return round((base + self.TOP) * self.S)
 
+    def tool_palette_available(self):
+        """Only ordinary MiniBlob pages can grow the transient tool palette.
+
+        Gaming is a fixed, game-safe FPS bubble.  It still uses the familiar
+        hover restore satellite, but must never inherit the palette canvas or
+        its curved tool lenses from another page.
+        """
+        if self.tools_open or self.page == "gaming":
+            return False
+        return ((self.page == "blob" and self.hardware_view == "bubble") or
+                (self.page == "music" and self.music_view == "bubble") or
+                (self.page == "sound" and self.sound_view == "bubble") or
+                (self.page == "settings" and self.settings_view == "bubble"))
+
     @property
     def pad_u(self):
         if self.page == "music" and self.music_view == "art":
@@ -673,14 +713,14 @@ class Panel:
         """Mirror a bubble-local x coordinate when the panel is parked left."""
         value = 104 - value if self.anchor_side == "left" else value
         offset = 0.0
-        if self.tool_reveal > .06 and not self.tools_open and self.anchor_side == "right":
+        if self.tool_reveal > .06 and self.tool_palette_available() and self.anchor_side == "right":
             offset = (self.TOOL_PALETTE_W - 104) * self.S
         return offset + value * self.S
 
     def bubble_main_box(self):
         """Inset fused lobe; the monitor-facing satellite always owns the edge."""
         ox = 0.0
-        if self.tool_reveal > .06 and not self.tools_open and self.anchor_side == "right":
+        if self.tool_reveal > .06 and self.tool_palette_available() and self.anchor_side == "right":
             ox = (self.TOOL_PALETTE_W - 104) * self.S
         if self.anchor_side == "left":
             return (22 * self.S + ox, 16 * self.S, 100 * self.S + ox, 94 * self.S)
@@ -710,6 +750,26 @@ class Panel:
     def tool_card_height(self):
         """The calculator and Clipboard share one monitor-safe card contract."""
         return self.calculator_height() if self.tool_view == "calculator" else self.TOOL_H
+
+    def tool_header_layout(self, leading=True):
+        """Mirror a tool header toward the edge where its bubble will retract.
+
+        Tool windows inherit the same spatial rule as every SmallBlob bubble:
+        the minimize/close rail belongs to the monitor-facing side.  Keeping
+        the opposite utility and title together makes the header readable on
+        either monitor edge instead of simply flipping two isolated icons.
+        """
+        S, W = self.S, self.w
+        left = self.anchor_side == "left"
+        return dict(
+            left=left,
+            leading=(W - 40*S) if left else 40*S,
+            title=(W - (70 if leading else 28)*S) if left else (70 if leading else 28)*S,
+            title_anchor="rm" if left else "lm",
+            new=124*S if left else W-124*S,
+            minimize=86*S if left else W-86*S,
+            close=48*S if left else W-48*S,
+        )
 
     def max_height(self):
         return round(max(self.TOP + 300 + 16 * 24, self.TOOL_H + 40) * self.S)
@@ -1237,7 +1297,7 @@ class Panel:
     def _draw_tool_satellites(self):
         """Four concentric curved glass segments, following the user's sketch."""
         reveal = max(0.0, min(1.0, self.tool_reveal))
-        if reveal <= .06 or self.tools_open:
+        if reveal <= .06 or not self.tool_palette_available():
             return
         S = self.S
         cx, cy = self.bubble_x(43), 55 * S
@@ -1307,17 +1367,19 @@ class Panel:
         if tools is None:
             return
         calc, mode = tools.calculator, tools.mode
-        self.glass_button("calcpanel:history", 40*S, 36*S, 17*S, "\uE81C", 16, always=True)
-        self.label(70*S, 36*S, "Calculator", 16, "Semibold Text", 245, "lm")
-        self.glass_button("tool:new", W-124*S, 36*S, 15*S, "\uE710", 12, always=True)
-        self.glass_button("tool:minimize", W-86*S, 36*S, 15*S, "\uE73F", 12, always=True)
-        self.glass_button("tool:close", W-48*S, 36*S, 15*S, "\uE711", 12, always=True)
+        header = self.tool_header_layout()
+        self.glass_button("calcpanel:history", header["leading"], 36*S, 17*S, "\uE81C", 16, always=True)
+        self.label(header["title"], 36*S, "Calculator", 16, "Semibold Text", 245, header["title_anchor"])
+        self.glass_button("tool:new", header["new"], 36*S, 15*S, "\uE710", 12, always=True)
+        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "\uE73F", 12, always=True)
+        self.glass_button("tool:close", header["close"], 36*S, 15*S, "\uE711", 12, always=True)
         titles = {"basic": "Basic", "scientific": "Scientific", "notes": "Math Notes", "convert": "Convert"}
         if self.calculator_history:
             self._calculator_history(tools)
             return
-        self.tool_button("calcmenu:mode", W-82*S, 88*S, 17*S,
-                         text=titles[mode] + "  ›", width=124*S, size=13)
+        mode_label = ("‹  " + titles[mode]) if header["left"] else (titles[mode] + "  ›")
+        self.tool_button("calcmenu:mode", 82*S if header["left"] else W-82*S, 88*S, 17*S,
+                         text=mode_label, width=124*S, size=13)
         if mode == "notes":
             self._calculator_notes(tools)
         else:
@@ -1471,7 +1533,9 @@ class Panel:
         else:
             items = [(key, key) for key in tools.UNITS[tools.convert_kind]]
             selected = getattr(tools, "convert_"+menu)
-        box = (W-256*S, 66*S, W-20*S, (82+len(items)*40)*S)
+        box = ((20*S, 66*S, 256*S, (82+len(items)*40)*S)
+               if self.anchor_side == "left"
+               else (W-256*S, 66*S, W-20*S, (82+len(items)*40)*S))
         self.di.rectangle(box, fill=0)
         # Opaque ink and active targets behind the popover must not leak through.
         self.rects = {key: value for key, value in self.rects.items() if value[3] < 66*S}
@@ -1524,10 +1588,11 @@ class Panel:
         multi = len(marked) > 1
         selected = (marked[0] if len(marked) == 1 else
                     (clipboard.item(visible_only=True) if clipboard and not marked else None))
-        self.glass_button("clip:refresh", 40*S, 36*S, 17*S, "\uE72C", 13, always=True)
-        self.label(70*S, 36*S, "Clipboard", 16, "Semibold Text", 245, "lm")
-        self.glass_button("tool:minimize", W-86*S, 36*S, 15*S, "\uE73F", 12, always=True)
-        self.glass_button("tool:close", W-48*S, 36*S, 15*S, "\uE711", 12, always=True)
+        header = self.tool_header_layout()
+        self.glass_button("clip:refresh", header["leading"], 36*S, 17*S, "\uE72C", 13, always=True)
+        self.label(header["title"], 36*S, "Clipboard", 16, "Semibold Text", 245, header["title_anchor"])
+        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "\uE73F", 12, always=True)
+        self.glass_button("tool:close", header["close"], 36*S, 15*S, "\uE711", 12, always=True)
         self.segmented("cliptab", (("recent", "Recent"), ("pinned", "Pinned")), tab,
                        (24*S, 70*S, W-24*S, 106*S), 13)
 
@@ -1669,9 +1734,10 @@ class Panel:
     def _blank_tool_card(self):
         """An intentionally quiet workspace reserved for the next Blob tool."""
         S, W = self.S, self.w
-        self.label(28*S, 36*S, "New tool", 16, "Semibold Text", 245, "lm")
-        self.glass_button("tool:minimize", W-86*S, 36*S, 15*S, "\uE73F", 12, always=True)
-        self.glass_button("tool:close", W-48*S, 36*S, 15*S, "\uE711", 12, always=True)
+        header = self.tool_header_layout(leading=False)
+        self.label(header["title"], 36*S, "New tool", 16, "Semibold Text", 245, header["title_anchor"])
+        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "\uE73F", 12, always=True)
+        self.glass_button("tool:close", header["close"], 36*S, 15*S, "\uE711", 12, always=True)
         canvas = (24*S, 76*S, W-24*S, self.TOOL_H*S-24*S)
         self.static(canvas, 28*S, strength=4*S, bevel=15*S, rim=.54,
                     frost=max(.22, self.tool_glossiness-.46), lift=.10, raised=.72)
@@ -2500,6 +2566,9 @@ class App:
         self.backdrop_started = time.perf_counter()
         self._overlay_unlocked = True
         self.gaming_modifier_drag = False
+        # Edge docking is live placement state. A free drag clears it; a
+        # deliberate monitor-edge drop establishes it again.
+        self.gaming_dock_edge = None
         self.hotkey_editing = False
         self.hotkey_swallow = set()
         self.dual_control_down = {LEFT_CONTROL: False, RIGHT_CONTROL: False}
@@ -2511,6 +2580,7 @@ class App:
         self.drag_click = None
         self.drag_origin = None
         self.drag_moved = False
+        self.drag_work = None
         self.music_press_active = False
         self.music_hold_fired = False
         self.music_click_pending = False
@@ -2529,6 +2599,7 @@ class App:
         self.vel = np.zeros(2)
         self.last_frame = time.perf_counter()
         self.last_text = 0.0
+        self._tabs_texture_at = 0.0
         self.interval = 0
         self.frame_dirty = True
         # The process is per-monitor DPI aware; use the actual host monitor
@@ -2623,27 +2694,62 @@ class App:
         py = self._panel_y(height)
         return (self.pos[0] + px, self.pos[1] + py, width, height)
 
-    def keep_panel_in_work_area(self, screen_hint=None):
-        """Keep the visible glass and its soft shadow on the monitor under the cursor."""
+    def _panel_work_area(self):
+        """Resolve the monitor from the visible panel centre, never its buffer."""
+        rect = self._panel_screen_rect()
+        if rect is not None:
+            x, y, width, height = rect
+            return work_area_at(round(x + width / 2), round(y + height / 2))[0]
+        x, y = cursor_pos()
+        return work_area_at(x, y)[0]
+
+    def _drag_work_for_cursor(self, x, y):
+        """Transfer monitors only after the pointer is clearly past the old edge.
+
+        Immediate monitor changes at a shared edge were the source of the
+        half-clipped, jumping drag.  Keeping one work area until the pointer
+        has crossed a small gutter makes the transfer deterministic, while a
+        later clamp guarantees the complete panel lands on the new display.
+        """
+        current = getattr(self, "drag_work", None) or self._panel_work_area()
+        candidate, _ = work_area_at(round(x), round(y))
+        if work_rect_key(candidate) != work_rect_key(current):
+            gutter = max(16.0, DRAG_MONITOR_TRANSFER_DIP * max(1.0, float(self.S)))
+            if point_outside_work_area(x, y, current) >= gutter:
+                self.drag_work = candidate
+                return candidate
+        self.drag_work = current
+        return current
+
+    def keep_panel_in_work_area(self, screen_hint=None, work=None):
+        """Keep the visible glass, controls and shadow inside one work area.
+
+        This is intentionally based on the drawn panel rather than the fixed
+        layered-window canvas.  It runs during size springs as well as drags,
+        so expanding a card, tool or Gaming strip cannot retain an old
+        off-screen origin and lose its action rail.
+        """
         if self.pos is None or not hasattr(self, "glass"):
-            return
+            return False
         rect = self._panel_screen_rect()
         if rect is None:
-            return
+            return False
         x, y, width, height = rect
-        if screen_hint is None:
-            monitor_x, monitor_y = x + width / 2, y + height / 2
-        else:
-            monitor_x, monitor_y = screen_hint
-        work, _ = work_area_at(round(monitor_x), round(monitor_y))
-        sp = self.glass.sp
-        # The renderer's fixed buffer may extend off-screen; the actual glass
-        # plus shadow must not. This is what makes a misplaced bubble recover
-        # itself instead of requiring another manual drag.
-        x_low = work.left - (self.glass.panel_x(width) - sp)
-        x_high = work.right - (self.glass.panel_x(width) + width + sp)
-        y_low = work.top - (self._panel_y(height) - sp)
-        y_high = work.bottom - (self._panel_y(height) + height + sp)
+        if work is None:
+            if screen_hint is None:
+                monitor_x, monitor_y = x + width / 2, y + height / 2
+            else:
+                monitor_x, monitor_y = screen_hint
+            work, _ = work_area_at(round(monitor_x), round(monitor_y))
+        # Keep one actual pixel between the soft shadow and the work-area
+        # boundary. It prevents anti-aliased edge clipping on fractional DPI.
+        guard = float(self.glass.sp + max(1, round(float(self.S))))
+        panel_x, panel_y = self.glass.panel_x(width), self._panel_y(height)
+        x_low = work.left - (panel_x - guard)
+        x_high = work.right - (panel_x + width + guard)
+        y_low = work.top - (panel_y - guard)
+        y_high = work.bottom - (panel_y + height + guard)
+        old = tuple(self.pos)
         if x_low <= x_high:
             self.pos[0] = min(max(self.pos[0], x_low), x_high)
         else:
@@ -2652,6 +2758,15 @@ class App:
             self.pos[1] = min(max(self.pos[1], y_low), y_high)
         else:
             self.pos[1] = (y_low + y_high) / 2
+        changed = abs(self.pos[0] - old[0]) > .01 or abs(self.pos[1] - old[1]) > .01
+        if changed:
+            self.frame_dirty = True
+            # A clamp is also a physical movement. Rebase the drag offset so
+            # the next mouse sample continues from the same point instead of
+            # snapping the glass back across the monitor seam.
+            if self.drag is not None and screen_hint is not None:
+                self.rebase_drag_anchor()
+        return changed
 
     def rebase_drag_anchor(self):
         """Keep a live drag attached to the pointer after DPI/side geometry changes."""
@@ -2660,17 +2775,20 @@ class App:
         cx, cy = cursor_pos()
         self.drag = (cx - self.pos[0], cy - self.pos[1])
 
-    def set_panel_side(self, side, preserve=True):
+    def set_panel_side(self, side, preserve=True, screen_hint=None, work=None):
         """Move the panel anchor without teleporting its current visible surface."""
         side = "left" if side == "left" else "right"
-        screen_hint = cursor_pos() if self.drag is not None else None
+        screen_hint = screen_hint or (cursor_pos() if self.drag is not None else None)
         if side == self.panel_side:
+            changed = self.panel.anchor_side != side
             self.panel.anchor_side = side
             self.glass.set_panel_side(side)
-            self.keep_panel_in_work_area(screen_hint)
+            self.keep_panel_in_work_area(screen_hint, work)
             if screen_hint is not None:
                 self.rebase_drag_anchor()
-            return
+            if changed and getattr(self, "visible", False):
+                self.draw_content()
+            return changed
         width = self.springs.get("width", self.panel.w).x / self.ss
         old_x = self.pos[0] + self.glass.panel_x(width) if self.pos is not None else None
         self.panel_side = side
@@ -2678,10 +2796,13 @@ class App:
         self.glass.set_panel_side(side)
         if preserve and self.pos is not None and old_x is not None:
             self.pos[0] += old_x - (self.pos[0] + self.glass.panel_x(width))
-        self.keep_panel_in_work_area(screen_hint)
+        self.keep_panel_in_work_area(screen_hint, work)
         if screen_hint is not None:
             self.rebase_drag_anchor()
         self.frame_dirty = True
+        if getattr(self, "visible", False):
+            self.draw_content()
+        return True
 
     def prepare_minimize_anchor(self, local_x=None):
         """Choose the destination edge from the actual button the user pressed."""
@@ -2697,20 +2818,18 @@ class App:
         work, _ = work_area_at(screen_x, screen_y)
         self.set_panel_side("left" if screen_x <= (work.left + work.right) / 2 else "right")
 
-    def maybe_flip_panel_side(self, screen_hint=None):
-        """Follow the monitor half under the pointer while dragging across displays."""
+    def maybe_flip_panel_side(self, screen_hint=None, work=None):
+        """Follow the actual panel centre, with a stable work-area handoff."""
         rect = self._panel_screen_rect()
         if rect is None:
             return
         x, y, width, height = rect
-        if screen_hint is None:
-            anchor_x, anchor_y = x + width / 2, y + height / 2
-        else:
-            anchor_x, anchor_y = screen_hint
-        work, _ = work_area_at(round(anchor_x), round(anchor_y))
+        anchor_x, anchor_y = x + width / 2, y + height / 2
+        if work is None:
+            work, _ = work_area_at(round(anchor_x), round(anchor_y))
         side = "left" if anchor_x <= (work.left + work.right) / 2 else "right"
         if side != self.panel_side:
-            self.set_panel_side(side, preserve=True)
+            self.set_panel_side(side, preserve=True, screen_hint=screen_hint, work=work)
 
     def _draw_content(self, crossfade=False):
         self.gaming.set_active(self.visible and self.panel.page == "gaming")
@@ -2737,7 +2856,13 @@ class App:
             self.glass.set_backdrop_palette(getattr(self.panel, "backdrop_palette", None))
         if crossfade:
             # the tab bar is shared by every page, so its thumb slides instead of fading
-            self.old_controls = [c for c in self.controls if not (c[0] == "seg" and c[1] == "page")]
+            outgoing = [c for c in self.controls if not (c[0] == "seg" and c[1] == "page")]
+            # The game-safe FPS bubble never carries the general tool palette.
+            # Drop outgoing palette arcs before crossfading so a page switch
+            # cannot leave a malformed halo around the FPS readout.
+            if self.panel.page == "gaming":
+                outgoing = [c for c in outgoing if c[0] != "arc"]
+            self.old_controls = outgoing
             self.glass.set_content(ink, accent, pic, backdrop)
             fade = self.springs.get("fade", 1.0, k=260, zeta=1.0)
             fade.x, fade.v, fade.target = 0.0, 0.0, 1.0
@@ -2992,9 +3117,84 @@ class App:
         self.panel.tabs_open, self.panel.tabs_t = tabs_open, tabs_t
         return self.glass.panel_y(round(height / self.ss))
 
-    def set_gaming_view(self, view):
+    def _small_gaming_strip_active(self):
+        return (not getattr(self, "full", False) and self.panel.page == "gaming" and
+                not getattr(self.panel, "tools_open", False) and
+                getattr(self.panel, "gaming_view", "horizontal") in ("horizontal", "vertical"))
+
+    def _snap_gaming_strip_to_edge(self, edge, work):
+        """Pin the visible Gaming surface to an edge while preserving its shadow."""
+        rect = self._panel_screen_rect()
+        if rect is None or self.pos is None:
+            return False
+        x, y, width, _ = rect
+        guard = float(self.glass.sp + max(1, round(float(self.S))))
+        if edge == "top":
+            dx, dy = 0.0, work.top + guard - y
+        elif edge == "left":
+            dx, dy = work.left + guard - x, 0.0
+        elif edge == "right":
+            dx, dy = work.right - guard - (x + width), 0.0
+        else:
+            return False
+        if abs(dx) <= .01 and abs(dy) <= .01:
+            return False
+        self.pos[0] += dx
+        self.pos[1] += dy
+        self.frame_dirty = True
+        return True
+
+    def gaming_edge_dock_target(self):
+        """Resolve the intended drop target from the active strip, not the host buffer."""
+        if not self._small_gaming_strip_active():
+            return None, None
+        rect = self._panel_screen_rect()
+        if rect is None:
+            return None, None
+        x, y, width, height = rect
+        work, _ = work_area_at(round(x + width / 2), round(y + height / 2))
+        threshold = max(20.0, GAMING_EDGE_DOCK_DIP * max(1.0, float(self.S)))
+        return gaming_dock_edge(rect, work, threshold), work
+
+    def maintain_gaming_edge_dock(self):
+        """Hold an edge-docked strip in frame while its size springs settle."""
+        edge = getattr(self, "gaming_dock_edge", None)
+        if (edge not in ("top", "left", "right") or
+                not self._small_gaming_strip_active() or getattr(self, "drag", None)):
+            return False
+        rect = self._panel_screen_rect()
+        if rect is None:
+            return False
+        x, y, width, height = rect
+        work, _ = work_area_at(round(x + width / 2), round(y + height / 2))
+        if edge in ("left", "right") and self.panel_side != edge:
+            self.set_panel_side(edge, preserve=True, work=work)
+        moved = self._snap_gaming_strip_to_edge(edge, work)
+        return self.keep_panel_in_work_area(work=work) or moved
+
+    def settle_gaming_edge_dock(self):
+        """Turn a deliberate top/side drop into the matching strip orientation."""
+        edge, work = self.gaming_edge_dock_target()
+        if edge is None:
+            self.gaming_dock_edge = None
+            return False
+        target = "horizontal" if edge == "top" else "vertical"
+        if edge in ("left", "right"):
+            self.set_panel_side(edge, preserve=True, work=work)
+        changed = self.set_gaming_view(target, dock_edge=edge)
+        self.gaming_dock_edge = edge
+        self._snap_gaming_strip_to_edge(edge, work)
+        self.keep_panel_in_work_area(work=work)
+        if changed:
+            self.old_page_springs()
+            self.draw_content(crossfade=True)
+        self.frame_dirty = True
+        return True
+
+    def set_gaming_view(self, view, dock_edge=None):
         """Select Horizontal, Vertical or Bubble without changing strip controls."""
         view = normalize_gaming_view(view)
+        self.gaming_dock_edge = dock_edge if dock_edge in ("top", "left", "right") else None
         if view not in dict(GAMING_VIEWS) or view == self.panel.gaming_view:
             return False
 
@@ -3035,6 +3235,47 @@ class App:
             height.target = self.panel.height(self.snap)
             morph.target = 1.0 if view == "bubble" else 0.0
         return True
+
+    def begin_panel_drag(self):
+        """Begin a free panel drag with a monitor handoff that cannot oscillate."""
+        cx, cy = cursor_pos()
+        self.drag = (cx - self.pos[0], cy - self.pos[1])
+        self.drag_click = None
+        self.drag_origin = (cx, cy)
+        self.drag_moved = False
+        self.drag_work = self._panel_work_area() if hasattr(self, "glass") else None
+        user32.SetCapture(self.hwnd)
+
+    def move_dragged_panel(self, x, y):
+        """Move one frame of a direct drag, preserving the cursor across monitors."""
+        if self.drag is None or self.pos is None:
+            return False
+        nx, ny = x - self.drag[0], y - self.drag[1]
+        if abs(nx - self.pos[0]) + abs(ny - self.pos[1]) <= 0:
+            return False
+        if not self.drag_moved:
+            self.drag_moved = True
+            # A free drag deliberately detaches the strip from a prior edge.
+            self.gaming_dock_edge = None
+        self.vel += (nx - self.pos[0], ny - self.pos[1])
+        self.pos = [nx, ny]
+        self.pinned = True
+        # The renderer is present for every live Blob window. Keeping this
+        # fallback makes a partially initialized host safely movable instead
+        # of turning an input event into a failed drag.
+        if not hasattr(self, "glass"):
+            return True
+        work = self._drag_work_for_cursor(x, y)
+        self.maybe_flip_panel_side((x, y), work)
+        self.keep_panel_in_work_area((x, y), work)
+        return True
+
+    def finish_panel_drag(self):
+        """Finalize a moved drag and adopt the relevant Gaming edge if any."""
+        moved = bool(self.drag_moved)
+        self.drag_work = None
+        if moved:
+            self.settle_gaming_edge_dock()
 
     def set_hardware_mode(self, mode):
         if mode not in dict(HARDWARE_MODES):
@@ -3080,6 +3321,7 @@ class App:
         self.drag_click = key
         self.drag_origin = (cx, cy)
         self.drag_moved = False
+        self.drag_work = self._panel_work_area() if hasattr(self, "glass") else None
         user32.SetCapture(self.hwnd)
         # Music retains tap/double-tap/hold playback behavior unless the
         # pointer actually moves beyond the drag threshold.
@@ -3295,7 +3537,7 @@ class App:
             user32.SetWindowLongPtrW(self.hwnd, -20, desired)
         if self.overlay_locked and not self.gaming_drag_active:
             self.drag = self.slider_drag = self.pressed = None
-            self.drag_click = self.drag_origin = None
+            self.drag_click = self.drag_origin = self.drag_work = None
             self.drag_moved = False
             self.hover = self.mouse_xy = self.attached = self.detaching = None
             self.mouse_in = False
@@ -3409,6 +3651,7 @@ class App:
         self.dual_control_latched = False
         self.hotkey_editing = self.panel.hotkey_editing = False
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
+        self.drag_work = None
         user32.KillTimer(self.hwnd, 4)
         user32.KillTimer(self.hwnd, 5)
         self.apply_gaming_input()
@@ -3432,6 +3675,17 @@ class App:
         if want != self.interval:
             self.interval = want
             user32.SetTimer(self.hwnd, 1, want, None)
+
+    def _sync_tabs_texture(self, now, tabs):
+        """Coalesce full texture rerasterization while the tab spring is moving."""
+        if abs(tabs.x - self.panel.tabs_t) <= .004:
+            return False
+        last = getattr(self, "_tabs_texture_at", 0.0)
+        if tabs.moving and now - last < TAB_TEXTURE_SECONDS:
+            return False
+        self.panel.tabs_t = tabs.x
+        self._tabs_texture_at = now
+        return True
 
     # ── lenses from controls + springs ──
     def resolve(self, controls, presence, prefix):
@@ -3670,10 +3924,11 @@ class App:
         bubble_proximity.target = self.bubble_proximity_target()
         reveal = max(0.0, min(1.0, bubble_proximity.x)) if self.bubble_mode else 0.0
         if abs(reveal - self.panel.tool_reveal) > 0.012:
-            was_palette = self.panel.tool_reveal > .06
+            palette_available = bool(getattr(self.panel, "tool_palette_available", lambda: False)())
+            was_palette = palette_available and self.panel.tool_reveal > .06
             self.panel.tool_reveal = reveal
             self.panel.update_width()
-            is_palette = self.panel.tool_reveal > .06
+            is_palette = palette_available and self.panel.tool_reveal > .06
             if was_palette != is_palette and self.bubble_mode:
                 # The canvas itself changes only at the quiet threshold. The
                 # satellites provide the authored spring motion, so the base
@@ -3714,8 +3969,7 @@ class App:
             bass.target, mid.target, treble.target = self.audio_motion.update((0, 0, 0), dt)
         tabs = self.springs.get("tabs", 0.0, k=300, zeta=0.85)
         tabs.target = 1.0 if self.panel.tabs_open else 0.0
-        if abs(tabs.x - self.panel.tabs_t) > 0.004:     # redraw the labels as the pill opens
-            self.panel.tabs_t = tabs.x
+        if self._sync_tabs_texture(now, tabs):
             self.draw_content()
         if self.panel.page == "music" and self.panel.music_view == "queue" and now - self.last_queue > 10:
             self.last_queue = now
@@ -3754,13 +4008,20 @@ class App:
                              self.panel.music_view not in ("art", "bubble") and
                              getattr(self.media, "art", None) is not None)
         animating = self.springs.moving or self.drag is not None or bool(self.slider_drag)             or abs(self.vel).max() > 0.5
-        background_dirty = self.frame_dirty
         # Poll the desktop on its own cadence. Animation can render the cached
         # glass scene every frame instead of forcing a full capture/upload.
         panel_h = self.springs["height"].x / self.ss
         if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank"):
             self._constrain_calculator_frame()
             panel_h = self.springs["height"].x / self.ss
+        # Size springs are allowed to overshoot for liquid motion, but never
+        # beyond the monitor's work area. The same pass recovers a panel that
+        # was left half outside a display by an interrupted drag or a layout
+        # change, before capture and layered-window presentation.
+        if self.drag is None and not getattr(self, "_magnifier_follow", False):
+            if not self.maintain_gaming_edge_dock():
+                self.keep_panel_in_work_area()
+        content_dirty = self.frame_dirty
         panel_y = self._panel_y(panel_h)
         if hasattr(self.glass, "set_tool_card"):
             self.glass.set_tool_card(self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank"))
@@ -3778,9 +4039,11 @@ class App:
                 self.glass.set_magnifier(aperture, magnifier_zoom.x)
             else:
                 self.glass.set_magnifier(None)
+        # A UI/content redraw does not require a fresh desktop grab.  Let the
+        # renderer's 60 FPS capture budget protect drag and hover smoothness.
         background_changed = self.glass.capture(self.pos[0], self.pos[1], width.x / self.ss,
-                                                panel_h, background_dirty, panel_y=panel_y)
-        if not (background_changed or background_dirty or animating or viz_live or backdrop_live):
+                                                panel_h, force=False, panel_y=panel_y)
+        if not (background_changed or content_dirty or animating or viz_live or backdrop_live):
             return
         self.frame_dirty = False
         tr = time.perf_counter()
@@ -3818,8 +4081,9 @@ class App:
         if hasattr(self.glass, "set_bubble_proximity"):
             self.glass.set_bubble_proximity(bubble_proximity.x)
         if hasattr(self.glass, "set_tool_expansion"):
-            self.glass.set_tool_expansion(1.0 if self.panel.tool_reveal > .06 and
-                                          not self.panel.tools_open else 0.0)
+            palette_open = (self.panel.tool_reveal > .06 and
+                            bool(getattr(self.panel, "tool_palette_available", lambda: False)()))
+            self.glass.set_tool_expansion(1.0 if palette_open else 0.0)
         if hasattr(self.glass, "set_bubble_time"):
             self.glass.set_bubble_time(now)
         if self.panel.page == "music":
@@ -3912,7 +4176,8 @@ class App:
     def _panel_y(self, height):
         """Bubble morphs preserve the top edge of the card they came from."""
         if getattr(self.panel, "tools_open", False):
-            return self.tool_top if self.tool_top is not None else self.glass.panel_y(int(round(height)))
+            tool_top = getattr(self, "tool_top", None)
+            return tool_top if tool_top is not None else self.glass.panel_y(int(round(height)))
         morph = self.springs.get("hardware_morph", 0.0)
         if self.panel.page == "blob" and (self.panel.hardware_view == "bubble" or morph.x > .001):
             return self.hardware_top
@@ -3977,7 +4242,7 @@ class App:
         self._sync_tool_capture()
         self.frame_dirty = True
 
-    def fit_calculator_in_work_area(self, screen_hint=None):
+    def fit_calculator_in_work_area(self, screen_hint=None, work=None):
         if not (getattr(self.panel, "tools_open", False) and
                 self.panel.tool_view in ("calculator", "clipboard", "blank")):
             return False
@@ -3986,7 +4251,8 @@ class App:
             return False
         x, y, w, h = rect
         point = screen_hint or (x+w/2, y+h/2)
-        work, _ = work_area_at(round(point[0]), round(point[1]))
+        if work is None:
+            work, _ = work_area_at(round(point[0]), round(point[1]))
         self._calculator_work = work
         margin = self.glass.sp
         available_h = min(work.bottom-work.top-2*margin, self.glass.H-2*margin)
@@ -4044,7 +4310,6 @@ class App:
             self.tool_top = max(self.glass.sp, min(self.tool_top,
                 self.glass.H - self.glass.sp - self.panel.height(self.snap) / self.ss))
             self.springs.get("magnifier_zoom", 1.0, k=190, zeta=.95).target = self.panel.magnifier_zoom
-            self.fit_magnifier_in_work_area()
             self._magnifier_follow = True
             self.pinned = True
             self.drag = self.drag_click = self.drag_origin = None
@@ -4053,18 +4318,6 @@ class App:
             user32.SetCursor(getattr(self, "cur_blank", None))
         self._sync_tool_capture()
         self.frame_dirty = True
-
-    def fit_magnifier_in_work_area(self):
-        rect = self._panel_screen_rect(self.panel.w / self.ss, self.panel.height(self.snap) / self.ss)
-        if rect is None:
-            return
-        x, y, w, h = rect
-        work, _ = work_area_at(round(x + w / 2), round(y + h / 2))
-        margin = self.glass.sp
-        tx = max(work.left + margin, min(x, work.right - w - margin))
-        ty = max(work.top + margin, min(y, work.bottom - h - margin))
-        self.pos[0] += tx - x
-        self.pos[1] += ty - y
 
     def _sync_tool_capture(self, force=False):
         """The live lens temporarily excludes itself from capture; preserve settings."""
@@ -4094,6 +4347,8 @@ class App:
         position = [round(x-self.glass.panel_x(width)-cx), round(y-top-cy)]
         if position != self.pos:
             self.pos = position
+            # The magnifier is a free reading lens: it may cross monitor
+            # edges and follow the pointer without the normal panel clamp.
             self.frame_dirty = True
 
     def _end_magnifier_follow(self):
@@ -4114,8 +4369,9 @@ class App:
                                      max(0.25, min(40.0, self.panel.magnifier_zoom + amount)))
         self.frame_dirty = True
 
-    def minimize_tool(self):
-        """Return to the bubble while leaving the calculator session cached."""
+    def minimize_tool(self, local_x=None):
+        """Return to the bubble at the same monitor-facing header rail."""
+        self.prepare_minimize_anchor(local_x)
         self._keep_tool_return_anchor()
         self.panel.tools_open = False
         self.panel.tool_minimized = True
@@ -4124,7 +4380,8 @@ class App:
         self._sync_tool_capture()
         self.frame_dirty = True
 
-    def close_tool(self):
+    def close_tool(self, local_x=None):
+        self.prepare_minimize_anchor(local_x)
         self._keep_tool_return_anchor()
         self.panel.tools_open = False
         self.panel.tool_minimized = False
@@ -4149,6 +4406,8 @@ class App:
         crossfade = False
         if kind == "page":
             if key != self.panel.page:
+                if key != "gaming":
+                    self.gaming_dock_edge = None
                 self.media_seen = None
                 self.old_page_springs()
                 self.panel.page = key
@@ -4158,6 +4417,14 @@ class App:
                 self.apply_gaming_input()
                 self.panel.update_width()
                 if key == "gaming":
+                    # A new Gaming session starts as the clean FPS bubble.
+                    # Its restore satellite appears only after a fresh hover;
+                    # no palette geometry may survive a page transition.
+                    self.panel.tool_reveal = 0.0
+                    self.bubble_linger_until = 0.0
+                    bubble = self.springs.get("bubble_proximity")
+                    if hasattr(bubble, "x"):
+                        bubble.x = bubble.v = bubble.target = 0.0
                     self.panel.tabs_open = False
                     self.panel.tabs_t = 0
                     self.springs.pop("tabs", None)
@@ -4299,9 +4566,9 @@ class App:
             elif key in ("magnifier", "clipboard"):
                 self.open_utility_tool(key)
             elif key == "minimize":
-                self.minimize_tool()
+                self.minimize_tool(x)
             elif key == "close":
-                self.close_tool()
+                self.close_tool(x)
             elif key == "new":
                 self.open_calculator_tool(new=True)
         elif kind == "magnify":
@@ -4396,12 +4663,21 @@ class App:
                     return 0
                 if msg == WM_MOUSEMOVE:
                     self.frame_dirty = True
-                    if time.perf_counter() - self.last_frame >= .008:
+                    if time.perf_counter() - self.last_frame >= FRAME_PACING_SECONDS:
                         self.frame()
                     user32.SetCursor(getattr(self, "cur_blank", None))
                     return 0
             if msg == WM_DPICHANGED:
                 self.sync_dpi(wp & 0xFFFF)
+                return 0
+            if msg in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE):
+                # Taskbar/work-area and monitor-layout changes can happen with
+                # no mouse movement. Refit the actual rendered panel at once.
+                if self.visible:
+                    if not self.maintain_gaming_edge_dock():
+                        self.keep_panel_in_work_area()
+                    self.frame_dirty = True
+                    self.frame()
                 return 0
             if msg == WM_APP_GAMING_LOCK or (msg == WM_HOTKEY and wp == GAMING_HOTKEY):
                 self.toggle_overlay_input()
@@ -4410,26 +4686,21 @@ class App:
                 if msg == 0x84:  # WM_NCHITTEST: shortcut modifiers temporarily enable dragging
                     return 1  # HTCLIENT
                 if msg == WM_LBUTTONDOWN:
-                    cx, cy = cursor_pos()
-                    self.drag = (cx - self.pos[0], cy - self.pos[1])
-                    user32.SetCapture(hwnd)
+                    self.begin_panel_drag()
                     return 0
                 if msg == WM_MOUSEMOVE:
                     if self.drag:
                         x, y = cursor_pos()
-                        nx, ny = x - self.drag[0], y - self.drag[1]
-                        if abs(nx - self.pos[0]) + abs(ny - self.pos[1]) > 0:
-                            self.vel += (nx - self.pos[0], ny - self.pos[1])
-                            self.pos = [nx, ny]
-                            self.pinned = True
-                            self.maybe_flip_panel_side((x, y))
-                            self.keep_panel_in_work_area((x, y))
-                            if time.perf_counter() - self.last_frame >= 0.008:
+                        if self.move_dragged_panel(x, y):
+                            if time.perf_counter() - self.last_frame >= FRAME_PACING_SECONDS:
                                 self.frame()
                     return 0
                 if msg in (WM_LBUTTONUP, WM_CAPTURECHANGED):
                     if self.drag:
+                        self.finish_panel_drag()
                         self.drag = None
+                        self.drag_click = self.drag_origin = None
+                        self.drag_moved = False
                         if user32.GetCapture() == hwnd:
                             user32.ReleaseCapture()
                         if self.captureable:
@@ -4619,16 +4890,10 @@ class App:
                             self.cancel_music_bubble_press()
                         if not self.drag_moved:
                             return 0
-                    nx, ny = x - self.drag[0], y - self.drag[1]
-                    if abs(nx - self.pos[0]) + abs(ny - self.pos[1]) > 0:
-                        self.vel += (nx - self.pos[0], ny - self.pos[1])
-                        self.pos = [nx, ny]
-                        self.pinned = True
-                        self.maybe_flip_panel_side((x, y))
-                        if self.fit_calculator_in_work_area((x, y)):
+                    if self.move_dragged_panel(x, y):
+                        if self.fit_calculator_in_work_area((x, y), getattr(self, "drag_work", None)):
                             self.draw_content()
-                        self.keep_panel_in_work_area((x, y))
-                        if time.perf_counter() - self.last_frame >= 0.008:
+                        if time.perf_counter() - self.last_frame >= FRAME_PACING_SECONDS:
                             self.frame()
                 else:
                     x, y = self.panel_local(lp)
@@ -4647,7 +4912,7 @@ class App:
                             bool(self.hover and (self.hover == "tabs" or self.hover.startswith("page:"))))
                     if want != self.panel.tabs_open:
                         self.panel.tabs_open = want
-                    if time.perf_counter() - self.last_frame >= 0.006:
+                    if time.perf_counter() - self.last_frame >= FRAME_PACING_SECONDS:
                         self.frame_dirty = True
                         self.frame()
                 return 0
@@ -4678,9 +4943,7 @@ class App:
                     self.draw_content()
                     self.frame_dirty = True
                 elif not self.bubble_mode:
-                    cx, cy = cursor_pos()
-                    self.drag = (cx - self.pos[0], cy - self.pos[1])
-                    user32.SetCapture(hwnd)
+                    self.begin_panel_drag()
                 return 0
             if msg in (WM_LBUTTONUP, WM_CAPTURECHANGED):
                 if self.music_press_active:
@@ -4694,6 +4957,7 @@ class App:
                     # as every MiniBlob body. A completed tap is handled above;
                     # either way the deferred drag state cannot linger.
                     if self.drag:
+                        self.finish_panel_drag()
                         self.drag = None
                         self.drag_click = self.drag_origin = None
                         self.drag_moved = False
@@ -4719,6 +4983,7 @@ class App:
                     user32.ReleaseCapture()
                     self.draw_content()
                 if self.drag:
+                    self.finish_panel_drag()
                     self.drag = None
                     self.drag_click = self.drag_origin = None
                     self.drag_moved = False

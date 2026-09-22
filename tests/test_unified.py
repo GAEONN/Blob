@@ -237,13 +237,13 @@ class UnifiedTests(unittest.TestCase):
         # Normalized shared-source hashes; works in downloaded archives without Git installed.
         expected = {
             'engine.py': 'fddf6cd47f896967851540034a6f787732f832a3ba962d50e1865d45ad7f37c3',
-            'glass.py': 'ddc9a333afb1ff921fa3158e0931ba51d6726ad61d5f0b4626a0a32e20a29584',
+            'glass.py': '8380a894dfab1a75dc45131f6b5f122783c50f65d6342c5add63528fada7f8f2',
             'media.py': '40156698d629532d3edc6fe631e032332c2e0237ebd50fb9af13443f52d96a94',
             'sound.py': 'cdb5fc4bd15a60f2509415de68fd6cea61e219ca8888ec078c5b92e909f874b1',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
-            'blob.pyw': '452858d6962467ede1ede6e54bcbf7caea2ed3479a8c2b613b282d26d3b2b1fc',
+            'blob.pyw': '462be233316b3fc525a4e7ce6c109a27b6d2652e6ab8cc2b502e173a87923869',
         }
         for name, digest in expected.items():
             source = (u.ROOT/name).read_text(encoding='utf-8').split('if __name__ == "__main__":')[0]

@@ -126,12 +126,15 @@ class MagnifierTests(unittest.TestCase):
         app.panel = RecordingPanel(1)
         app.panel.tools_open, app.panel.tool_view = True, "magnifier"
         app.ss, app.snap, app.hwnd = 2, {}, 123
-        app.glass = NS(panel_x=lambda width: 420-width)
+        app.glass = NS(panel_x=lambda width: 420-width, sp=28,
+                       panel_y=lambda height: 800-height)
+        app.fit_magnifier_in_work_area = Mock()
         app.pos, app.pinned = [0, 0], True
         app._magnifier_home, app._magnifier_follow = ([700, 420], False), True
         with patch.object(blob, "cursor_pos", return_value=(900, 500)):
             app._track_magnifier(324, 324, 24)
         self.assertEqual(app.pos, [676, 348])
+        app.fit_magnifier_in_work_area.assert_not_called()
         with patch.object(blob.user32, "GetCapture", return_value=123), \
                 patch.object(blob.user32, "ReleaseCapture") as release:
             app._end_magnifier_follow()

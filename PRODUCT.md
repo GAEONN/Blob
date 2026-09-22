@@ -78,7 +78,10 @@ Windows app is already installed.
 - SmallBlob's Gaming view offers the same six FPS, frame-time and system metrics in a
   horizontal strip, a vertically stacked strip, or a compact FPS/frame-time Bubble. The
   strip menu reuses the main app's morphing tab dropdown and follows the side of the monitor
-  where the strip is parked.
+  where the strip is parked. Dropping a free Gaming strip at the top work-area edge snaps it
+  horizontal; dropping it at either side edge snaps it vertical. Every SmallBlob size spring,
+  tool expansion and monitor transfer clamps the complete glass surface and its action rail
+  inside the current monitor work area.
   Settings → Overlay → Gaming view selects Horizontal, Vertical, or Bubble. Bubble remembers
   the last strip orientation, and its inset satellite restores that strip with the same spring
   morph instead of adding another minimizer button to the strip.

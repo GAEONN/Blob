@@ -805,9 +805,11 @@ class GlassRenderer:
         self.accs = [None, None]
         self.pics = [None, None]
         self.backdrops = [None, None]
-        # DXGI capture can follow a scrolling desktop at the display cadence;
-        # keep the slower fallback conservative so it does not steal CPU.
-        self.capture_min_interval = (1.0 / 60.0
+        # The app's 16 ms native timer is the 60 FPS presentation rail. Give
+        # the capture gate a small tolerance below 1/60 so consecutive timer
+        # ticks do not alternate into a visibly choppy 30 FPS cadence.
+        # Keep the slower fallback conservative so it does not steal CPU.
+        self.capture_min_interval = (1.0 / 64.0
                                      if getattr(self.source, "outputs", ()) else 1.0 / 30.0)
         self._last_capture = 0.0
         self._bg_dirty = True
@@ -1011,7 +1013,11 @@ class GlassRenderer:
         key = (win_x, win_y, h, int(round(panel_w)))
         moved = key != self._last_key
         now = time.perf_counter()
-        if (not force and not moved and self.capture_min_interval > 0 and
+        # Moving a layered window can generate mouse events much faster than
+        # the compositor.  Keep the desktop readback/upload inside the same
+        # capture budget whether geometry changed or not; the cached scene is
+        # still presented at 60 FPS while the panel glides.
+        if (not force and self.capture_min_interval > 0 and
                 now - self._last_capture < self.capture_min_interval):
             self.stats["capture"] = now - tb
             return False
