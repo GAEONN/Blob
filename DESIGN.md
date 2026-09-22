@@ -23,8 +23,9 @@ Python 3.13 + `moderngl`, `dxcam`, `numpy`, `scipy`, `Pillow`, `pystray`, `psuti
 ## 1. What the look is
 
 Real glass sitting on the desktop. Not a blurred bitmap: the panel **captures the live screen
-behind it and refracts it on the GPU** every frame, so video, games and moving windows bend
-through it in real time.
+behind it and refracts it on the GPU**. The background copy refreshes independently while the
+glass geometry renders at the animation cadence, so video, games and moving windows still bend
+through it in real time without repeating the expensive desktop capture on every spring step.
 
 Ingredients, all in one fragment shader (`glass.py` → `FRAG`):
 
@@ -132,9 +133,10 @@ fades and their knob swells instead.
 * **Capture with DXGI Desktop Duplication** (`dxcam`), region-limited: ~0.7 ms per changed frame
   and it reports when nothing changed. GDI `BitBlt` was 5 ms every frame — only keep it as the
   fallback path (and for the moment right after the panel moves, when duplication has no new frame).
-* **Poll, then draw.** An 8 ms timer checks whether the screen changed; a frame is only rendered
-  when the background, an animation or the content actually changed. Idle costs nothing; over
-  playing video it reaches 60+ fps at ~4 ms/frame.
+* **Poll, then draw.** A stable 16 ms timer targets 60 FPS; the screen copy refreshes at its own
+  cadence and a frame renders when the background, an animation or the content actually changed.
+  Idle costs nothing, while animated glass reuses the latest capture instead of blocking on a
+  desktop copy every frame.
 * `timeBeginPeriod(1)`, or `WM_TIMER` jitters at 15.6 ms and everything looks choppy.
 * **Never block the UI thread.** COM/audio/UI-Automation calls take 50–300 ms; run them on worker
   threads with a job queue and let the UI show optimistic state immediately.
@@ -206,25 +208,33 @@ the window to capture animation states without touching the mouse.
 
 ## Components
 
-### System card and mode bubble
+### System card and metrics bubble
 
 The first view is named **System**. Its 340 DIP card keeps CPU/GPU thermals and the first
-two fan readings above the fold, followed by a five-part mode track. One context chevron expands a
-bounded, scrollable inventory that also includes every discovered fan. One unmarked top-right circle
-morphs the view into a 104 × 98 DIP mode bubble. Width, height, content and the signed-distance
+two fan readings above the fold, followed by a five-part mode track. One visible nested control
+expands a bounded, scrollable inventory that also includes every discovered fan. One top-right circle
+morphs the view into a 104 × 98 DIP metrics bubble showing CPU and GPU temperatures. Width, height, content and the signed-distance
 silhouette spring together rather than swapping at either endpoint. The shader draws the final outline as the smooth union of a
 78 DIP cycle body and a 43 DIP restore satellite; it is not a rounded-rectangle approximation.
-Bubble clicks cycle Auto → Quiet → Balanced → Turbo. Custom is intentionally excluded because
-it requires the full card. A selected preference must be labeled monitoring-only whenever no real
+The main body retains the quick-mode action for compatibility, while the visible inset satellite
+restores the System card. A selected preference must be labeled monitoring-only whenever no real
 fan-profile backend reports an active mode.
 
 The top and right edges remain anchored throughout the morph so the card's unmarked corner lens
 appears to become the final bubble. One session-wide overlay state begins unlocked and survives
 page changes, hide/show cycles and transitions into Gaming. Only the configurable shortcut or tray
 command toggles it. Locked applies real cross-process input transparency to every view; unlocked
-restores controls and satellite dragging. Only the restore satellite is a bubble drag target
-and shows the move cursor; the main System lobe cycles modes. Settings persists the modified key chord through
+restores controls and direct MiniBlob dragging. The primary lobe and restore satellite are both
+click-or-drag targets: a short release retains the original action, a real move repositions Blob,
+and the cursor remains a normal arrow. Tool-palette lobes are never drag handles. Settings persists the modified key chord through
 `RegisterHotKey`.
+
+### Sound status bubble
+
+Regular and Compact Sound cards share the same inset bubble affordance. The 104 × 98 DIP bubble
+shows boost level and enhancement state; its main lobe toggles enhancement and its satellite
+restores the full Sound card. The geometry, drag rule and restore animation reuse the System and
+Music bubble language.
 
 ### Music player bubble
 
@@ -275,18 +285,18 @@ not a new global type ramp.
 This addition describes the native extension in `blob.pyw`, `gaming.py` and
 `applemusic.py`; the incumbent brief and design tokens remain unchanged.
 
-**Slim-strip rule.** Gaming rests at 624 × 86 DIP (560 DIP wide in Compact), with
-six aligned groups: FPS/frame time, CPU temperature/load, GPU temperature/load,
-RAM percentage/used memory, fan RPM and GPU power/power-source hint. The left menu
-reveals the existing spring-animated switcher, adding 56 DIP of height. Dragging
-and clicking the strip preserve foreground focus. It reuses refractive glass,
-continuous corners, adaptive ink and the existing warm temperature warnings.
-
-**Satellite-only move rule.** Gaming optionally contracts to a 104 × 98 DIP bubble with
-24 DIP FPS numerals, a 10 DIP FPS label and 11 DIP frame time in ms. Its restore satellite
-returns to the strip or drags while unlocked. Across System, Music and Gaming bubbles, only
-the satellite shows a move cursor; main lobes retain their content/gestures. Settings exposes
-Strip / FPS bubble. Unavailable FPS and ms stay dashes.
+**Slim-strip rule.** SmallBlob Gaming offers the same six groups—FPS/frame time, CPU
+temperature/load, GPU temperature/load, RAM percentage/used memory, fan RPM and GPU
+power/power-source hint—in two strip orientations: 624 × 86 DIP horizontal (560 DIP wide in
+Compact) or 188 × 424 DIP vertical (172 DIP wide in Compact). Both use the same type ramp,
+labels and metric order; Vertical is a stack of the Horizontal instrument, not a second
+dashboard. Settings also exposes a 104 × 98 DIP Bubble that shows only FPS and frame time.
+The edge menu reveals the same spring-animated switcher used by the main app, adding 56 DIP
+of height and anchoring its resting pill to the left or right monitor edge. The Bubble morph
+shares the strip's top edge and keeps an inset restore satellite; it remembers whether the
+user came from Horizontal or Vertical. All three states preserve foreground focus, refractive
+glass, continuous corners, adaptive ink and warm temperature warnings. Unavailable FPS and ms
+stay dashes.
 
 **Unknown-stays-unknown rule.** Unavailable metrics use dashes or explicit sensor
 and setup hints. FPS/frame time describe application presentation intervals, not
@@ -302,7 +312,7 @@ ellipsized text and optional covers: 42 DIP regular rows include artist captions
 while 34 DIP Compact rows show titles only. Selecting a row targets its title and
 artist in Apple Music rather than relying on a stale queue index.
 
-Current v4 source check: `blob.pyw` and `unified.py` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
+Current v5 source check: `blob.pyw` and `unified.py` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
 `reactive.py` (relative transients), `engine.py` (provider/ID and zero-RPM preservation),
 `V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview artwork is synthetic test material;
 no new shipping raster or multi-PC validation is claimed. Provider and fan-control limits
@@ -311,3 +321,77 @@ remain product facts in PRODUCT.md.
 Not canonized or repaired: the inherited browser roadmap, noncanonical section structure,
 system display faces and glyph-icon prescriptions remain pre-existing drift/defects outside
 this component reconciliation; their presence is not approval for new surfaces to inherit them.
+
+### Bubble tools and reading lens
+
+The idle main bubble is unchanged. Four clear, rounded arc-shaped tools extrude from
+inside it through the same smooth-union glass surface as the restore satellite. The
+pieces have fuller centers and round ends, no added color, and mirrored placement.
+Calculator, Clipboard and Magnifier use the shared Fluent vector icon family so their
+strokes stay smooth at every DPI. The fourth satellite stays deliberately blank rather
+than carrying an unrelated currency mark; it opens a monitor-safe empty **New tool**
+canvas reserved for the next editable Blob tool. Submerged controls cannot intercept
+body clicks. Cursor positions are resolved against the current rendered canvas, with a
+stable hover region across the tool gaps. Tools and restore satellite retract together
+three seconds after leaving the interaction region.
+
+The magnifier is a 208-DIP circular glass aperture with a fused, diagonal frosted handle,
+not a rectangular card. Its clear center samples the live desktop at 0.25–40×; only the
+outer 14 DIP of the reading aperture adds lens warp and chromatic separation. The
+handle carries the zoom value. The lens follows the cursor; wheel notches zoom by
+0.5×, and right-click or Escape releases it and restores Blob's previous position.
+Capture loss also releases it. Live magnification temporarily excludes its own window
+from capture and restores the saved screenshot preference afterward.
+
+Native layout, interaction and GPU sampling are checked offline, including both
+palette sides and multiple DPI scales. Preview text/backgrounds are synthetic; no
+desktop automation or shipping raster assets are introduced.
+
+### Clipboard session card
+
+Clipboard uses the calculator's 420 × 748 DIP card contract: the same stable header
+rail, frosted segmented switcher, generous current-item preview, rounded list rows,
+and monitor-safe expansion/retraction. It scales and clamps as one card on every
+monitor, including negative-coordinate displays and taskbar work areas; its Close and
+Minimize actions remain in the same header positions as Calculator.
+
+The session is local and memory-only. Blob retains up to 24 recent text snippets, file
+sets, and self-contained DIB images while it is running; nothing is saved into Blob
+settings or sent to a service. Recent and Pinned views are paginated five items at a
+time. Marked text entries paste as one joined text payload and marked file entries paste
+as one real Windows file-drop payload; mixed selections are rejected rather than silently
+changing their meaning. Single text restores as Unicode text, file sets restore as a real
+Windows file-drop payload, and cached DIB images restore as an image payload, so
+destination apps receive the original kind rather than a pasted path list. Images beyond the in-memory size cap
+or raw process-owned bitmaps are explicitly marked live-only instead of claiming they
+can be recovered. Clearing removes only unpinned entries from the active session.
+
+### Calculator modes and monitor-safe layout
+
+The calculator keeps the reference's six-column scientific block above a four-column
+numeric keypad, with a larger right-aligned result. Its default canvas is 420 × 748 DIP;
+Basic uses 512 DIP height, Math Notes/History 600, and Convert 612. The main header keeps
+History, New, Minimize and Close in stable positions. The mode popover offers Basic,
+Scientific, Math Notes and Convert, blocks controls underneath, and uses the shared glass
+fade/morph. Addition is muted green, subtraction red and equals amber; keys are frosted,
+the surrounding shell remains Blob glass. Other pages and the main bubble are unchanged.
+
+Opening, moving between monitors, DPI changes and mode changes fit the target inside the
+monitor work area (excluding the taskbar) and renderer bounds. Font scaling has a native
+pixel floor. Animation overshoot is constrained and calculator control lenses are clipped
+to the panel, with top-anchored text/hit geometry. Retraction keeps the same top anchor.
+The lens budget now accommodates every scientific/numeric key rather than cutting off
+the final rows. These rules were checked with synthetic negative-coordinate monitor and
+DPI fixtures, not by taking control of the user's desktop.
+
+History is a paginated, clickable list retained across launches, with saved angle modes;
+the previous 100-entry cap is removed without deleting existing history. Math Notes is a
+typed local worksheet: expressions, named variables and derived lines, saved on this
+device. It is not handwriting recognition or a symbolic algebra engine. Keyboard typing,
+Enter, Backspace, line clicking, Left/Right, Home/End and Delete are supported.
+
+Convert supports length, mass, temperature, volume, area, speed and currency. Currency
+uses daily reference rates from [Frankfurter](https://frankfurter.dev/), fetched off the
+UI thread and cached with the publication date. Offline states explicitly identify cached
+or unavailable rates; amounts, notes and calculation history are not sent to the provider.
+The first currency selection refreshes an expired cache; the refresh icon retries manually.

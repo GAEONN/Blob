@@ -8,6 +8,7 @@ import importlib.util
 from pathlib import Path
 import queue
 import sys
+import tempfile
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import Mock, patch
@@ -24,6 +25,7 @@ loader.exec_module(blob)
 import glass
 import sound
 from media import NowPlaying
+from toolset import ToolController
 
 
 def fixtures():
@@ -37,6 +39,7 @@ def fixtures():
                 power=dict(battery=81, plugged=True))
     sound = NS(enabled=True, boost=.5, boost_db=7.5, bass=.3, clarity=.3, surround=.25,
                preset="music", output="Speakers (Very Long USB Audio Device Name)",
+               outputs=["Speakers (Very Long USB Audio Device Name)", "Odyssey G40B (NVIDIA High Definition Audio)"],
                cable=True, fx_conflict=False, error="", volume=.65, spectrum=np.zeros(28))
     media = NS(active=True, title="A very long song title to test clipping", artist="An artist",
                album="An album", source="Apple Music", playing=True, duration=300,
@@ -105,6 +108,51 @@ class LayoutTests(unittest.TestCase):
                         self.draw(p)
                         self.assert_bounds(p)
 
+    def test_smallblob_gaming_strip_orientations_fit_at_every_dpi(self):
+        for dpi in (1, 1.25, 1.5, 2):
+            for compact in (False, True):
+                for view in ("horizontal", "vertical"):
+                    with self.subTest(dpi=dpi, compact=compact, view=view):
+                        p = self.panel(dpi, compact, page="gaming")
+                        p.gaming_view = view
+                        p.tabs_t = 1
+                        self.draw(p)
+                        self.assert_bounds(p)
+                        expected = ((p.GAMING_VERTICAL_WIDE, p.GAMING_VERTICAL_NARROW)
+                                    if view == "vertical" else (p.GAMING_WIDE, p.GAMING_NARROW))
+                        self.assertEqual(p.w, expected[bool(compact)] * p.S)
+                        self.assertFalse(any(k.startswith("size:") for k in p.rects))
+                        self.assertNotIn("gview:vertical", p.rects)
+                        self.assertNotIn("gview:horizontal", p.rects)
+                        self.assertIn("gview:bubble", p.rects)
+
+    def test_gaming_compact_is_independent_from_orientation_and_menu_side(self):
+        self.assertEqual(blob.normalize_gaming_view("bubble"), "bubble")
+        for view in ("horizontal", "vertical"):
+            for side in ("left", "right"):
+                with self.subTest(view=view, side=side):
+                    p = self.panel(compact=True, page="gaming")
+                    p.gaming_view = view
+                    p.tabs_side = side
+                    p.tabs_open = True
+                    p.tabs_t = 1
+                    self.draw(p)
+                    self.assertEqual(p.gaming_view, view)
+                    self.assertIn("page:gaming", p.rects)
+                    self.assert_bounds(p)
+
+    def test_horizontal_metrics_clear_both_control_rails(self):
+        p = self.panel(compact=False, page="gaming")
+        p.game = dict(fps=144, frame_ms=6.94, ram_percent=62, ram_gb=19.8)
+        fps_boxes = {}
+        for side in ("left", "right"):
+            p.tabs_side = side
+            self.draw(p)
+            fps_boxes[side] = next(bounds for text, bounds in p.labels if text == "FPS")
+            self.assertFalse(intersects(fps_boxes[side], p.rects["gview:bubble"]))
+            self.assertFalse(intersects(fps_boxes[side], p.rects["tabs"]))
+        self.assertEqual(fps_boxes["left"], fps_boxes["right"])
+
     def test_settings_labels_clear_toggles_and_all_controls_reachable(self):
         expected = {"backdrop", "queueart", "musicreactive", "soundstart", "startup", "capture"}
         for compact in (False, True):
@@ -119,7 +167,7 @@ class LayoutTests(unittest.TestCase):
                         for text, bounds in p.labels:
                             self.assertFalse(intersects(bounds, box), (compact, row, key, text))
                     if key != "tabs":
-                        self.assertLessEqual(box[3], p.ink.height - 78 * p.S)
+                        self.assertLessEqual(box[3], p.ink.height - 56 * p.S)
             self.assertEqual(seen, expected)
 
     def test_music_restores_distinct_regular_and_compact_sizes(self):
@@ -172,18 +220,151 @@ class LayoutTests(unittest.TestCase):
                 self.assertIn("musicutil:options", p.rects)
                 self.assert_bounds(p)
 
-    def test_music_bubble_has_gesture_body_and_restore_satellite(self):
+    def test_music_bubble_has_gesture_body_and_hover_restore_satellite(self):
         p = self.panel(page="music", view="bubble")
         self.draw(p)
         self.assertEqual(p.w, p.BUBBLE_W * p.S)
         self.assertEqual(p.height(self.snap), p.BUBBLE_H * p.S)
         self.assertIn("mbubble:gesture", p.rects)
-        self.assertIn("mview:now", p.rects)
+        self.assertNotIn("mview:now", p.rects)
         self.assertNotIn("tabs", p.rects)
-        # The fused lobes overlap visually; the satellite is registered last so
-        # it wins hit testing in the shared neck while the body owns its centre.
-        self.assertEqual(p.hit(79 * p.S, 22 * p.S), "mview:now")
-        self.assertEqual(p.hit(43 * p.S, 62 * p.S), "mbubble:gesture")
+        # The restore satellite belongs to the hover reveal and is absent after
+        # the linger has settled back to the quiet circular state.
+        p.tool_reveal = 1.0
+        self.draw(p)
+        self.assertEqual(p.w, p.TOOL_PALETTE_W * p.S)
+        self.assertIn("mview:now", p.rects)
+        self.assertEqual(p.hit(p.bubble_x(82.5), 22.5 * p.S), "mview:now")
+        self.assertEqual(p.hit(p.bubble_x(43), 62 * p.S), "mbubble:gesture")
+        self.assert_bounds(p)
+
+    def test_system_bubble_shows_cpu_gpu_temperatures_and_hover_restore_satellite(self):
+        p = self.panel(page="blob")
+        p.hardware_view = "bubble"
+        self.draw(p)
+        labels = [text for text, _ in p.labels]
+        self.assertIn("CPU", labels)
+        self.assertIn("GPU", labels)
+        self.assertIn("86°", labels)
+        self.assertIn("74°", labels)
+        self.assertNotIn("hview:card", p.rects)
+        p.tool_reveal = 1.0
+        self.draw(p)
+        self.assertIn("hview:card", p.rects)
+        self.assertEqual(p.hit(p.bubble_x(82.5), 22.5 * p.S), "hview:card")
+        self.assert_bounds(p)
+
+    def test_tool_satellites_keep_the_main_bubble_and_expand_readably(self):
+        p = self.panel(page="blob")
+        p.hardware_view = "bubble"
+        p.tool_reveal = 1.0
+        self.draw(p)
+        labels = [text for text, _ in p.labels]
+        self.assertIn("CPU", labels)
+        self.assertIn("GPU", labels)
+        self.assertIn("tool:calculator", p.rects)
+        self.assertIn("tool:clipboard", p.rects)
+        self.assertIn("tool:blank", p.rects)
+        self.assertNotIn("∑", labels)
+        self.assertGreaterEqual(p.rects["tool:calculator"][2] - p.rects["tool:calculator"][0], 24 * p.S)
+        self.assertEqual(p.w, p.TOOL_PALETTE_W * p.S)
+        self.assertEqual(p.height(self.snap), p.TOOL_PALETTE_H * p.S)
+        self.assertTrue(any(c[0] == "static" for c in p.controls))
+        self.assert_bounds(p)
+
+    def test_blank_tool_slot_opens_a_monitor_safe_empty_canvas(self):
+        for scale in (1, 1.25, 1.5, 2):
+            with self.subTest(scale=scale):
+                p = self.panel(scale=scale, page="blob")
+                p.tools_open, p.tool_view = True, "blank"
+                self.draw(p)
+                self.assertEqual(p.w, p.TOOL_W * p.S)
+                self.assertEqual(p.height(self.snap), p.TOOL_H * p.S)
+                self.assertIn("tool:minimize", p.rects)
+                self.assertIn("tool:close", p.rects)
+                self.assertIn("New tool", [text for text, _ in p.labels])
+                self.assert_bounds(p)
+
+    def test_radial_palette_hit_testing_preserves_gaps_and_bubble(self):
+        import math
+        for side in ("left", "right"):
+            for scale in (1, 1.5, 2):
+                p = self.panel(scale=scale, page="blob")
+                p.hardware_view, p.anchor_side, p.tool_reveal = "bubble", side, 1.0
+                self.draw(p)
+                self.assert_bounds(p)
+                self.assertEqual(len(p.tool_arcs), 4)
+                angles = []
+                for key, (cx, cy, orbit, thickness, angle, half_angle) in p.tool_arcs.items():
+                    self.assertEqual(p.hit(cx + orbit * math.cos(angle),
+                                           cy + orbit * math.sin(angle)), key)
+                    self.assertEqual(cx, p.bubble_x(43))
+                    angles.append(angle)
+                for first, second in zip(angles, angles[1:]):
+                    middle = (first + second) / 2
+                    self.assertIsNone(p.hit(cx + orbit * math.cos(middle),
+                                             cy + orbit * math.sin(middle)))
+                p.tool_reveal = 0.0
+                self.draw(p)
+                self.assertFalse(p.tool_arcs)
+                self.assertNotIn("hview:card", p.rects)
+                self.assertIn("hcycle", p.rects)
+
+    def test_palette_unions_lobes_as_one_smooth_surface(self):
+        """The glass shader must not reintroduce cusp seams between lobes."""
+        self.assertIn("palette = smin(palette, lensSd(i, p), 18.0*S)", glass.FRAG)
+        self.assertNotIn("shape = min(shape, smin(body, lensSd(i, p), 18.0*S))", glass.FRAG)
+
+    def test_calculator_card_uses_readable_scientific_and_numeric_grids(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tools = ToolController(Path(folder) / "tools.json")
+            p = self.panel(page="blob")
+            p.tools_open = True
+            p.tool_view = "calculator"
+            self.draw(p, tools=tools)
+            self.assertIn("calc:mc", p.rects)
+            self.assertIn("calc:Deg", p.rects)
+            self.assertIn("calc:7", p.rects)
+            self.assertIn("calc:=", p.rects)
+            self.assertEqual(p.w, p.TOOL_W * p.S)
+            self.assertEqual(p.height(self.snap), p.TOOL_H * p.S)
+            self.assert_bounds(p)
+
+    def test_magnifier_handle_label_clears_the_reading_aperture_at_all_scales(self):
+        for scale in (1, 1.25, 1.5, 2):
+            p = self.panel(scale=scale)
+            p.tools_open, p.tool_view = True, "magnifier"
+            self.draw(p)
+            self.assert_bounds(p)
+            self.assertEqual(p.rects, {})  # wheel and right-click, no reading obstructions
+            for text, bounds in p.labels:
+                self.assertFalse(intersects(bounds, p.magnifier_aperture()), text)
+
+    def test_sound_bubble_has_status_and_hover_restore_satellite(self):
+        p = self.panel(page="sound")
+        p.sound_view = "bubble"
+        self.draw(p)
+        self.assertEqual(p.w, p.BUBBLE_W * p.S)
+        self.assertEqual(p.height(self.snap), p.BUBBLE_H * p.S)
+        self.assertNotIn("sview:card", p.rects)
+        self.assertIn("toggle:sound", p.rects)
+        self.assertIn("+8", [text for text, _ in p.labels])
+        p.tool_reveal = 1.0
+        self.draw(p)
+        self.assertIn("sview:card", p.rects)
+        self.assertEqual(p.hit(p.bubble_x(82.5), 22.5 * p.S), "sview:card")
+        self.assert_bounds(p)
+
+    def test_sound_output_menu_lists_physical_destinations(self):
+        p = self.panel(page="sound")
+        p.sound_menu = True
+        self.draw(p)
+        self.assertIn("Output", [text for text, _ in p.labels])
+        self.assertIn("output:0", p.rects)
+        self.assertIn("output:1", p.rects)
+        for key in ("output:0", "output:1"):
+            box = p.rects[key]
+            self.assertEqual(p.hit((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), key)
         self.assert_bounds(p)
 
     def test_missing_audio_driver_has_setup_action_in_both_sizes(self):
@@ -246,9 +427,25 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(p.w, p.BUBBLE_W * p.S)
         self.assertEqual(p.height(self.snap), p.BUBBLE_H * p.S)
         self.assertIn("hcycle", p.rects)
-        self.assertIn("hview:card", p.rects)
+        self.assertNotIn("hview:card", p.rects)
         self.assertNotIn("tabs", p.rects)
         self.assert_bounds(p)
+
+    def test_left_edge_control_rail_clears_page_headers(self):
+        cases = (("blob", "hview:bubble", "CPU"),
+                 ("sound", "sview:bubble", "Output"),
+                 ("settings", "settingsview:bubble", "APPEARANCE"))
+        for page, control, heading in cases:
+            for compact in (False, True):
+                with self.subTest(page=page, compact=compact):
+                    p = self.panel(compact=compact, page=page)
+                    p.anchor_side = "left"
+                    self.draw(p)
+                    box = p.rects[control]
+                    wanted = "Boost" if page == "sound" and compact else heading
+                    label_box = next(bounds for text, bounds in p.labels if text == wanted)
+                    self.assertFalse(intersects(box, label_box), (page, compact, box, label_box))
+                    self.assert_bounds(p)
 
     def test_hardware_details_include_discovered_fans(self):
         self.snap["fans"] = [dict(name="Front intake", rpm=820), dict(name="AIO pump", rpm=2100)]
@@ -313,7 +510,7 @@ class LayoutTests(unittest.TestCase):
         p = self.panel(page="sound")
         self.draw(p)
         for text, box in p.labels:
-            if text != "Quit FxSound":
+            if text not in ("Quit FxSound", "Use Blob audio"):
                 self.assertFalse(intersects(box, p.rects["fxquit"]), text)
 
     def test_fit_handles_tiny_width_and_emoji_font(self):
@@ -489,6 +686,60 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(app.music_top, 900 - round(old_height / app.ss))
         self.assertEqual(app._panel_y(49), app.music_top)
 
+    def test_sound_view_change_preserves_card_top_and_morphs(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = blob.Panel(1)
+        app.panel.page = "sound"
+        app.snap = fixtures()[0]
+        app.springs = blob.Springs()
+        app.glass = NS(panel_y=lambda height: 900 - height)
+        app.ss = blob.Panel.SS
+        old_width, old_height = app.panel.w, app.panel.height(app.snap)
+        app.springs.get("width", old_width, k=185, zeta=.86)
+        app.springs.get("height", old_height, k=260, zeta=.82)
+        app.springs.get("sound_morph", 0, k=155, zeta=.82)
+        with patch.object(blob.engine, "load_config", return_value={}), \
+                patch.object(blob.engine, "save_config"):
+            app.set_sound_view("bubble")
+        self.assertEqual(app.panel.sound_view, "bubble")
+        self.assertEqual(app.springs["width"].target, blob.Panel.BUBBLE_W * app.panel.S)
+        self.assertEqual(app.springs["height"].target, blob.Panel.BUBBLE_H * app.panel.S)
+        self.assertEqual(app.springs["sound_morph"].target, 1)
+        self.assertEqual(app.sound_top, 900 - round(old_height / app.ss))
+        self.assertEqual(app._panel_y(49), app.sound_top)
+
+    def test_gaming_view_change_preserves_orientation_for_bubble_restore(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = blob.Panel(1)
+        app.panel.page = "gaming"
+        app.panel.gaming_view = "vertical"
+        app.snap = fixtures()[0]
+        app.springs = blob.Springs()
+        app.glass = NS(panel_y=lambda height: 900 - height)
+        app.ss = blob.Panel.SS
+        old_width, old_height = app.panel.w, app.panel.height(app.snap)
+        app.springs.get("width", old_width, k=185, zeta=.86)
+        app.springs.get("height", old_height, k=260, zeta=.82)
+        app.springs.get("hardware_morph", 0, k=155, zeta=.82)
+        with patch.object(blob.engine, "load_config", return_value={}), \
+                patch.object(blob.engine, "save_config"):
+            self.assertTrue(app.set_gaming_view("bubble"))
+        self.assertEqual(app.panel.gaming_restore_view, "vertical")
+        self.assertEqual(app.springs["width"].target, blob.Panel.BUBBLE_W * app.panel.S)
+        self.assertEqual(app.springs["height"].target, blob.Panel.BUBBLE_H * app.panel.S)
+        self.assertEqual(app.springs["hardware_morph"].target, 1)
+        self.assertEqual(app.gaming_top, 900 - round(old_height / app.ss))
+        with patch.object(blob.engine, "load_config", return_value={}), \
+                patch.object(blob.engine, "save_config"):
+            self.assertTrue(app.set_gaming_view("vertical"))
+        self.assertEqual(app.panel.gaming_view, "vertical")
+        self.assertEqual(app.panel.gaming_restore_view, "vertical")
+        self.assertEqual(app.springs["width"].target,
+                         blob.Panel.GAMING_VERTICAL_WIDE * app.panel.S)
+        self.assertEqual(app.springs["height"].target,
+                         blob.Panel.GAMING_VERTICAL_H * app.panel.S)
+        self.assertEqual(app.springs["hardware_morph"].target, 0)
+
     def test_music_bubble_tap_double_tap_and_hold(self):
         app = blob.App.__new__(blob.App)
         app.hwnd = 101
@@ -524,6 +775,21 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(app.panel.options["musicreactive"])
         self.assertFalse(cfg["options"]["musicreactive"])
         save.assert_called_once_with(cfg)
+
+    def test_sound_output_menu_selects_named_destination(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = blob.Panel(1)
+        app.panel.sound_menu = False
+        app.sound = NS(output_options=Mock(return_value=["Realtek", "Odyssey"]),
+                       select_output=Mock(), refresh_devices=Mock())
+        app.draw_content = Mock()
+        app.frame = Mock()
+        app.click("device", 0)
+        self.assertTrue(app.panel.sound_menu)
+        app.sound.refresh_devices.assert_called_once_with()
+        app.click("output:1", 0)
+        app.sound.select_output.assert_called_once_with("Odyssey")
+        self.assertFalse(app.panel.sound_menu)
 
     def test_hardware_bubble_cycles_only_quick_modes(self):
         app = blob.App.__new__(blob.App)
@@ -567,6 +833,7 @@ class LifecycleTests(unittest.TestCase):
         for enabled in (False, True):
             app = blob.App.__new__(blob.App)
             app.capture_until, app.captureable, app.hwnd = 1, enabled, 1
+            app.panel = NS(magnifier_active=False)
             app.glass = NS(source=NS(frozen=True))
             with patch.object(blob.time, "time", return_value=30), \
                  patch.object(blob.user32, "SetWindowDisplayAffinity") as affinity:

@@ -1,17 +1,18 @@
-# Blob v4 — SmallBlob + Dashboard
+# Blob v5 — SmallBlob + Dashboard
 
 One application, two presentations: the SmallBlob layouts and the large
 Dashboard showing Music, System, Sound and Gaming together. They share one window, tray,
 audio controller, media session, sensor monitor and settings profile. Switching does not
-restart playback or create another DSP engine. See [V4-NOTES.md](V4-NOTES.md).
+restart playback or create another DSP engine. See [V5-NOTES.md](V5-NOTES.md).
 
 Right-click the tray icon → **SmallBlob / Dashboard / Game dock**, or press **F10 while
 Blob is focused** to switch between small and full views. F11 resizes Dashboard only.
+The Dashboard top rail also opens SmallBlob directly and includes a native minimize control.
 The game dock expands downward and starts click-through. The shared default lock shortcut
-is **Ctrl+Alt+V**, or your migrated shortcut. Do not run older enhancers alongside v4.
+is **Ctrl+Alt+V**, or your migrated shortcut. Do not run older enhancers alongside v5.
 
-Blob v4 is the current release and is intended to live on `main`. The historical **v3.0.0**
-tag remains available for reference; **v4.0.1** is the current paired application patch.
+Blob v5 is the current release and is intended to live on `main`. Historical **v3.0.0** and
+**v4.0.1** tags remain available; **v5.0.0** is the current paired application release.
 
 Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
 liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
@@ -24,14 +25,14 @@ It is built with Python, OpenGL, and native Win32 APIs—no browser window and n
 Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/GAEONN/Blob/v4.0.1/install.ps1 | iex
+irm https://raw.githubusercontent.com/GAEONN/Blob/v5.0.0/install.ps1 | iex
 ```
 
-The installer downloads this pinned release to `%LOCALAPPDATA%\Programs\Blob-v4`, creates an isolated Python
+The installer downloads this pinned release to `%LOCALAPPDATA%\Programs\Blob-v5`, creates an isolated Python
 environment, installs the required packages, creates shortcuts, verifies the installation, and
-launches the app. It creates **Blob v4** on the Desktop without replacing older shortcuts.
-Preferences live in `%LOCALAPPDATA%\Blob-v4`; first launch copies legacy preferences without
-editing the original and leaves audio boost off. Re-running repairs this v4 installation.
+launches the app. It creates **Blob v5** on the Desktop without replacing older shortcuts.
+Preferences live in `%LOCALAPPDATA%\Blob-v5`; first launch copies the latest legacy preferences without
+editing the original and leaves audio boost off. Re-running repairs this v5 installation.
 
 One administrator prompt may be required for optional system integrations:
 
@@ -56,9 +57,11 @@ Windows metrics remain usable while optional integrations are unavailable.
 | **Gaming** | Always-on-top FPS, frame time, temperatures, utilization, memory, fan, and GPU-power strip |
 | **Settings** | Startup, capture visibility, pointer style, overlay lock shortcut, and per-feature options |
 
-SmallBlob retains Settings → Appearance → Size → Regular / Compact, as well as its System,
-Music and Gaming bubbles, square album-art view, and gaming strip. Dashboard adds the
-simultaneous overview and a slim, downward-expanding left game dock.
+SmallBlob retains Settings → Appearance → Size → Regular / Compact, as well as its System, Sound
+and Music bubbles, square album-art view, and Gaming's matching Horizontal / Vertical strips plus
+the small FPS/frame-time Bubble. Choose the Gaming state in Settings; Bubble returns to the
+last strip orientation through its inset satellite. Dashboard adds the simultaneous overview
+and a slim, downward-expanding left game dock.
 
 ## Everyday controls
 
@@ -92,10 +95,10 @@ does not expose a universal temperature or fan-control API. Blob therefore treat
 Balanced, Turbo, and Custom choices as monitoring preferences unless a real hardware backend reports
 that it can apply them; it never pretends a firmware fan curve changed.
 
-The Hardware bubble behaves like this:
+The System bubble behaves like this:
 
-- Click the main body to cycle Auto → Quiet → Balanced → Turbo.
-- Click the satellite to return to the full Hardware card.
+- The main body shows CPU and GPU temperatures at a glance.
+- Click the visible satellite to return to the full System card.
 - While Blob is unlocked, click-drag the bubble to reposition it.
 
 ## Music that is not tied to Apple Music
@@ -122,16 +125,23 @@ treble moves the satellite. This works without enabling Blob's Sound enhancement
 
 Sound is optional. When enabled, Windows audio is routed through VB-CABLE into Blob's separate DSP
 process and then played on the selected physical output. The processing chain provides EQ, bass,
-clarity, stereo width, loudness compression, and a look-ahead limiter.
+clarity, stereo width, loudness compression, and a look-ahead limiter. Blob accepts the installed
+VB-CABLE endpoint-name variants and can use FxSound's configured physical destination after the
+user chooses **Use Blob audio** to hand off the route.
 
 Running DSP outside the interface keeps rendering stalls away from the audio stream. If VB-CABLE is
-missing, the Sound view reports the missing setup instead of silently failing. FxSound and similar
-apps can compete for the same routing; Blob detects that conflict and offers a clear recovery path.
+missing, the Sound view reports the missing setup instead of silently failing. FxSound and Blob
+cannot own the Windows default route at the same time; the handoff button closes FxSound, starts
+Blob's route, and restores the prior device when Blob is disabled.
+Regular and Compact Sound cards also offer a small status bubble showing boost and on/off state;
+its satellite restores the full Sound controls.
 
 ## Gaming overlay
 
-Gaming is a narrow, no-activation overlay intended for windowed and borderless games. It displays
-real application presentation intervals from PresentMon rather than monitor refresh rate.
+Gaming is a narrow, no-activation overlay intended for windowed and borderless games. SmallBlob
+offers the same six-metric strip in horizontal or vertical orientation, plus a Bubble that only
+shows FPS and frame time. It displays real application presentation intervals from PresentMon
+rather than monitor refresh rate.
 
 - Unlock Blob to navigate or reposition the strip.
 - Lock Blob before playing so clicks pass through it.
@@ -154,7 +164,7 @@ avoid recursive self-capture.
 Clone the repository and run the installer locally:
 
 ```powershell
-git clone --branch v4.0.1 https://github.com/GAEONN/Blob.git
+git clone --branch v5.0.0 https://github.com/GAEONN/Blob.git
 cd Blob
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
@@ -200,7 +210,7 @@ Key files:
 
 | File | Responsibility |
 | --- | --- |
-| [`unified.py`](unified.py) | Single-instance host, shared controllers, view switching, v4 settings |
+| [`unified.py`](unified.py) | Single-instance host, shared controllers, view switching, v5 settings |
 | [`dashboard/dashboard.py`](dashboard/dashboard.py) | Full overview and downward-expanding gaming dock |
 | [`blob.pyw`](blob.pyw) | Window lifecycle, layout, animation, input, and view behavior |
 | [`glass.py`](glass.py) | Desktop capture, signed-distance shader, refraction, and layered-window output |

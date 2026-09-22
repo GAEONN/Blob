@@ -227,6 +227,31 @@ class GamingInputTests(unittest.TestCase):
         self.assertEqual(a.pos, [140, 110])
         self.assertTrue(a.pinned)
 
+    def test_unlocked_bubble_body_distinguishes_click_from_drag(self):
+        a = self.app
+        a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
+                     hit=Mock(return_value="hcycle"))
+        a.bubble_unlocked, a.drag = True, None
+        a.panel_local = Mock(return_value=(43, 55))
+        a.click, a._schedule, a.frame = Mock(), Mock(), Mock()
+        a.pos, a.pinned, a.captureable = [100, 80], False, False
+        a.vel, a.last_frame = blob.np.zeros(2), 0
+
+        with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (132, 101)]):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+            a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
+            a.wndproc(101, blob.WM_LBUTTONUP, 0, 0)
+        a.click.assert_called_once_with("hcycle", 0)
+        self.assertEqual(a.pos, [100, 80])
+
+        a.click.reset_mock()
+        with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (170, 130)]):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+            a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
+            a.wndproc(101, blob.WM_LBUTTONUP, 0, 0)
+        a.click.assert_not_called()
+        self.assertEqual(a.pos, [140, 110])
+
     def test_unlocked_music_bubble_main_keeps_playback_gestures(self):
         a = self.app
         a.panel = NS(page="music", music_view="bubble", tabs_open=False,
@@ -237,8 +262,34 @@ class GamingInputTests(unittest.TestCase):
         a.pos = [100, 80]
         with patch.object(blob, "cursor_pos", return_value=(130, 100)):
             a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
-        self.assertIsNone(a.drag)
+        self.assertIsNotNone(a.drag)
+        self.assertEqual(a.drag_click, "mbubble:gesture")
         a.start_music_bubble_press.assert_called_once_with()
+
+    def test_tool_palette_button_never_becomes_a_drag_handle(self):
+        a = self.app
+        a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
+                     hit=Mock(return_value="tool:calculator"))
+        a.bubble_unlocked, a.drag = True, None
+        a.panel_local = Mock(return_value=(20, 20))
+        a.click = Mock()
+        a.pos = [100, 80]
+        with patch.object(blob, "cursor_pos", return_value=(130, 100)):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+        self.assertIsNone(a.drag)
+        a.click.assert_called_once_with("tool:calculator", 20)
+
+    def test_bubble_drag_keeps_the_normal_arrow_cursor(self):
+        a = self.app
+        a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
+                     magnifier_active=False, w=100)
+        a.hover, a.pointer_style = "hcycle", "system"
+        a.bubble_unlocked = True
+        a.panel_local = Mock(return_value=(20, 20))
+        a.springs = {"width": NS(x=100), "height": NS(x=100)}
+        with patch.object(blob, "cursor_pos", return_value=(130, 100)):
+            self.assertEqual(a.wndproc(101, blob.WM_SETCURSOR, 0, 0), 1)
+        self.u.SetCursor.assert_called_once_with(a.cur_arrow)
 
     def test_unlocked_music_satellite_clicks_or_drags(self):
         a = self.app

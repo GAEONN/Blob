@@ -1,9 +1,9 @@
 # Blob Dashboard
 
-**v4 host:** This presentation runs inside `../unified.py` alongside SmallBlob, with one set of
-controllers and `%LOCALAPPDATA%\Blob-v4` settings. F10/tray commands switch views; the shared
+**v5 host:** This presentation runs inside `../unified.py` alongside SmallBlob, with one set of
+controllers and `%LOCALAPPDATA%\Blob-v5` settings. F10/tray commands switch views; the shared
 default lock shortcut is Ctrl+Alt+V. `dashboard/app.pyw` requests this view from the unified
-entry point. See ../V4-NOTES.md.
+entry point. See ../V5-NOTES.md.
 
 The full-screen Windows presentation for SmallBlob. The user's pinned model is a car-display /
 CarPlay-like overview: Music, System temperatures/fans, Sound controls and Gaming data
@@ -12,8 +12,8 @@ type, continuous corners and restrained motion, not a new brand identity.
 
 ## Shared host
 
-Dashboard shares the unified v4 process, `Local\BlobUnified-v4` mutex, tray title,
-`%LOCALAPPDATA%\Blob-v4` settings, media session, hardware monitor and audio controller with
+Dashboard shares the unified v5 process, `Local\BlobUnified-v5` mutex, tray title,
+`%LOCALAPPDATA%\Blob-v5` settings, media session, hardware monitor and audio controller with
 SmallBlob. The compatibility entry point is `app.pyw`; it requests the Dashboard view and does
 not create a second engine. Audio routing is system-wide, so enabling boost is a system action,
 not a private mixer.

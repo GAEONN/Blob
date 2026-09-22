@@ -127,6 +127,21 @@ class UnifiedTests(unittest.TestCase):
             self.assertFalse(result['options']['soundstart'])
             self.assertEqual(old.read_bytes(), before)
 
+    def test_first_run_migration_prefers_v4_without_mutating_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            v4 = Path(tmp)/'Blob-v4'/'config.json'
+            v3 = Path(tmp)/'Blob-v3'/'config.json'
+            v4.parent.mkdir()
+            v3.parent.mkdir()
+            v4.write_text(json.dumps({'glass': .47, 'compact': False, 'options': {'soundstart': True}}))
+            v3.write_text(json.dumps({'glass': .21, 'compact': True}))
+            before = v4.read_bytes()
+            result = u.initial_config(tmp)
+            self.assertEqual(result['glass'], .47)
+            self.assertFalse(result['compact'])
+            self.assertFalse(result['options']['soundstart'])
+            self.assertEqual(v4.read_bytes(), before)
+
     def test_malformed_old_profile_falls_back(self):
         with patch.object(Path, 'read_text', return_value='[]'):
             self.assertEqual(u.initial_config('unused')['app_view'], 'small')
@@ -136,7 +151,7 @@ class UnifiedTests(unittest.TestCase):
     def test_startup_points_to_one_entry_and_own_registry_value(self):
         with patch.object(u.winreg, 'CreateKey'), patch.object(u.winreg, 'SetValueEx') as write:
             u.set_startup(True)
-            self.assertEqual(write.call_args.args[1], 'Blob v4')
+            self.assertEqual(write.call_args.args[1], 'Blob v5')
         self.assertIn('app.pyw', write.call_args.args[-1])
         self.assertNotIn('dashboard\\app.pyw', write.call_args.args[-1])
 
@@ -147,6 +162,29 @@ class UnifiedTests(unittest.TestCase):
         self.assertEqual((r.panel_x(248), r.panel_y(216)), (404, 552))
         r.full = True
         self.assertEqual((r.panel_x(92), r.panel_y(480)), (28, 28))
+
+    def test_screen_capture_rounds_fractional_window_coordinates(self):
+        import numpy as np
+        source = u.glass.ScreenSource.__new__(u.glass.ScreenSource)
+        source.frozen = False
+        source.outputs = []
+        source.screen_dc = 123
+        pixels = np.zeros((8, 10, 4), dtype=np.uint8)
+        with patch.object(u.glass, 'gdi_grab') as grab:
+            u.glass.ScreenSource.grab(source, 12.4, 33.6, 10.0, 8.0, pixels, True)
+        self.assertEqual(grab.call_args.args[1:5], (12, 34, 10, 8))
+
+    def test_dashboard_exposes_smallblob_and_minimize_controls(self):
+        p = u.dash.DashboardPanel(1)
+        snap, sound, media, am = reg.fixtures()
+        p.am = am
+        p.game = {'fps': 144, 'frame_ms': 6.94, 'ram_percent': 62, 'ram_gb': 19.8}
+        p.draw(snap, sound, .35, False, media=media)
+        self.assertIn('dash:small', p.rects)
+        self.assertIn('dash:minimize', p.rects)
+        self.assertEqual(p.hit(*((p.rects['dash:small'][0] + p.rects['dash:small'][2]) / 2,
+                                 (p.rects['dash:small'][1] + p.rects['dash:small'][3]) / 2)),
+                         'dash:small')
 
     def test_real_gpu_compiles_and_resizes_without_window_or_capture(self):
         import numpy as np
@@ -194,18 +232,18 @@ class UnifiedTests(unittest.TestCase):
         for controller in controllers:
             controller.assert_called_once()
 
-    def test_legacy_sources_unchanged_except_entrypoint(self):
+    def test_shared_sources_match_the_current_unified_profile(self):
         import hashlib
-        # Normalized v3 source hashes; works in downloaded archives without Git installed.
+        # Normalized shared-source hashes; works in downloaded archives without Git installed.
         expected = {
-            'engine.py': 'c54b82e09a3834f4cc246c54ffc98dc7f0c0573b3fe73c91f52d00ebc4d16327',
-            'glass.py': 'dc1e77f8d57cb742afe0e9ab42287ac4db1f0b86e36b0ecfedc77d88d6e6af0f',
+            'engine.py': 'fddf6cd47f896967851540034a6f787732f832a3ba962d50e1865d45ad7f37c3',
+            'glass.py': 'ddc9a333afb1ff921fa3158e0931ba51d6726ad61d5f0b4626a0a32e20a29584',
             'media.py': '40156698d629532d3edc6fe631e032332c2e0237ebd50fb9af13443f52d96a94',
-            'sound.py': '5d2273839d3c0e4bcedbfef77cd0d7113a86f5f497c0413bd867b4b09395c758',
+            'sound.py': 'cdb5fc4bd15a60f2509415de68fd6cea61e219ca8888ec078c5b92e909f874b1',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
-            'blob.pyw': 'd5643ad5b5e3db94630897ba3db167afad7dbd60c00152202c5e0599ccf0e792',
+            'blob.pyw': '452858d6962467ede1ede6e54bcbf7caea2ed3479a8c2b613b282d26d3b2b1fc',
         }
         for name, digest in expected.items():
             source = (u.ROOT/name).read_text(encoding='utf-8').split('if __name__ == "__main__":')[0]

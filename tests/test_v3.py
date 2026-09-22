@@ -138,7 +138,11 @@ class V3LayoutTests(unittest.TestCase):
             self.draw(p)
             self.assert_bounds(p)
             self.assertEqual([t for t, _ in p.labels], ['144', 'FPS', '6.9 ms'])
-            self.assertIn('gview:strip', p.rects)
+            self.assertIn('gcycle', p.rects)
+            self.assertNotIn('gview:restore', p.rects)
+            p.tool_reveal = 1.0
+            self.draw(p)
+            self.assertIn('gview:restore', p.rects)
 
     def test_settings_all_text_boxes_have_vertical_clearance(self):
         for scale in (1, 1.5, 2):
@@ -169,15 +173,17 @@ class V3LayoutTests(unittest.TestCase):
         self.assertEqual(x1-x0,y1-y0)
         self.assertEqual(p.pic.getpixel((x0+int(7*p.S), y0+int(p.S)))[3],255)
 
-    def test_hardware_move_cursor_only_on_satellite(self):
+    def test_hardware_body_and_satellite_are_direct_drag_handles(self):
         a = blob.App.__new__(blob.App)
         a.panel = NS(page='blob', hardware_view='bubble')
         a.visible, a._overlay_unlocked, a.drag_click = True, True, None
         a.hover = 'hcycle'
-        self.assertFalse(a.bubble_drag_active)
-        self.assertFalse(a.bubble_drag_key('hcycle'))
+        self.assertTrue(a.bubble_drag_active)
+        self.assertTrue(a.bubble_drag_key('hcycle'))
         a.hover = 'hview:card'
         self.assertTrue(a.bubble_drag_active)
+        self.assertTrue(a.bubble_drag_key('hview:card'))
+        self.assertFalse(a.bubble_drag_key('tool:calculator'))
 
 
 if __name__ == '__main__':

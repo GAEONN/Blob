@@ -8,10 +8,10 @@ colors:
 
 # Design System: Blob Dashboard
 
-v4 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
-shared settings/controllers and a mode-dependent shader anchor. The shared v4 profile lives
-in `%LOCALAPPDATA%\Blob-v4`, uses the `Local\BlobUnified-v4` mutex, and defaults to
-Ctrl+Alt+V (or a migrated custom binding); see ../V4-NOTES.md.
+v5 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
+shared settings/controllers and a mode-dependent shader anchor. The shared v5 profile lives
+in `%LOCALAPPDATA%\Blob-v5`, uses the `Local\BlobUnified-v5` mutex, and defaults to
+Ctrl+Alt+V (or a migrated custom binding); see ../V5-NOTES.md.
 
 ## Overview
 
@@ -43,7 +43,7 @@ Content begins at y=78, with 18 side/bottom inset, 16 inter-card gaps, and a 96-
 
 ## Elevation & Depth
 
-Reuse the inherited GPU refraction, dispersion, rim and soft SDF shadow. Dashboard cards use strength 6, bevel 14, rim 0.55, frost 0.82 and lift 0.06; selected capsule buttons use strength 4, bevel 8, rim 0.6, frost 1 and lift 0.14. These are native shader parameters, not CSS shadows. Geometry springs use k=230, damping ratio 0.94; content crossfade uses k=190, damping ratio 1. The overview is capped at 30 Hz and the dock at 60 Hz. Artwork stays stationary; optional audio bars remain local to it.
+Reuse the inherited GPU refraction, dispersion, rim and soft SDF shadow. Dashboard cards use strength 6, bevel 14, rim 0.55, frost 0.82 and lift 0.06; selected capsule buttons use strength 4, bevel 8, rim 0.6, frost 1 and lift 0.14. These are native shader parameters, not CSS shadows. Geometry springs use k=230, damping ratio 0.94; content crossfade uses k=190, damping ratio 1. The overview and dock share a 60 FPS animation budget; background capture refreshes independently so it does not block spring motion. Artwork stays stationary; optional audio bars remain local to it.
 
 ## Shapes
 
@@ -53,8 +53,8 @@ The inherited 34 outer radius with an 18 inset yields 16-radius cards. Artwork i
 
 **Keyboard controls.** Tab/Shift+Tab cycle registered targets when visible and unlocked, excluding decorative artwork/gesture regions. Focus has a persistent full-coverage inset outline independent of hover. Enter/Space activates focused non-slider controls; Search keeps text entry. Focused sliders use Left/Right steps of 0.02 and Home/End endpoints, clamped to [0,1]. Seek commits its position; Glass and sound adjustments persist through their existing handlers. F11 resizes the overview; Escape exits an unlocked dock. The dock starts click-through, with Ctrl+Alt+V as the default configurable lock chord. Its satellite expands, top chevron collapses, and Blob returns to the overview. Dashboard disables bubble dragging; it uses the system pointer.
 
-**Unified v4 shell.** Dashboard runs inside the same `Blob v4` process as SmallBlob. It shares
-the tray, `%LOCALAPPDATA%\Blob-v4` settings, `Local\BlobUnified-v4` mutex, monitor, media
+**Unified v5 shell.** Dashboard runs inside the same `Blob v5` process as SmallBlob. It shares
+the tray, `%LOCALAPPDATA%\Blob-v5` settings, `Local\BlobUnified-v5` mutex, monitor, media
 session, audio controller and gaming telemetry. `dashboard/app.pyw` requests the Dashboard
 view from `../app.pyw`; it does not create a second engine. See PRODUCT.md for shared
 Windows media/audio effects and service limitations.

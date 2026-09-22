@@ -42,7 +42,7 @@ function Install-Python {
 }
 
 Write-Host ''
-Write-Host 'Blob v4.0.1 installer' -ForegroundColor White
+Write-Host 'Blob v5.0.0 installer' -ForegroundColor White
 Write-Host 'Core app + FPS + universal sensors + system-wide audio' -ForegroundColor DarkGray
 Write-Host ''
 
@@ -51,7 +51,7 @@ $temporaryDownload = $null
 if ($localCheckout) {
     $installRoot = $PSScriptRoot
 } else {
-    $installRoot = Join-Path $env:LocalAppData 'Programs\Blob-v4'
+    $installRoot = Join-Path $env:LocalAppData 'Programs\Blob-v5'
 }
 
 if ($DryRun) {
@@ -71,9 +71,9 @@ if (-not $localCheckout) {
     $temporaryDownload = Join-Path ([IO.Path]::GetTempPath()) ("Blob-install-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $temporaryDownload | Out-Null
     $archive = Join-Path $temporaryDownload 'Blob.zip'
-    Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/GAEONN/Blob/archive/refs/tags/v4.0.1.zip' -OutFile $archive
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/GAEONN/Blob/archive/refs/tags/v5.0.0.zip' -OutFile $archive
     Expand-Archive -LiteralPath $archive -DestinationPath $temporaryDownload
-    $sourceRoot = Join-Path $temporaryDownload 'Blob-4.0.1'
+    $sourceRoot = Join-Path $temporaryDownload 'Blob-5.0.0'
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
     Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $installRoot -Recurse -Force
 } else {

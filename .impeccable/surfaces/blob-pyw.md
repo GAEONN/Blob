@@ -21,12 +21,15 @@ Segoe type and warm temperature warnings. No new brand color or smaller body tex
 STORY: Open Gaming from the existing switcher, position the strip, return focus to the game.
 Read live hardware measurements and PresentMon frame timings; unknowns remain dashes.
 
-FIRST VIEWPORT: A 624×86 DIP strip (560 compact), a quiet menu at the left and six aligned
-metric groups. Frame time sits with FPS; utilization accompanies temperatures. Navigation
-is tucked away until requested; the existing spring carries its reveal.
+FIRST VIEWPORT: A 624×86 DIP strip (560 compact), a quiet menu at the edge and six aligned
+metric groups. Frame time sits with FPS; utilization accompanies temperatures. A matching
+188×424 DIP vertical stack and a 104×98 DIP FPS/frame-time Bubble are selected in Settings;
+Bubble restores the last strip orientation through its inset satellite. Navigation is tucked
+away until requested; the existing spring carries its reveal.
 
-FORM: User-specified horizontal strip; narrow extension, no concept seed. Preserve the
-incumbent interface. Menu expansion is the signature interaction. No shipping raster assets.
+FORM: User-specified horizontal strip with a matching vertical stack and compact Bubble state;
+narrow extension, no concept seed. Preserve the incumbent interface. Menu expansion and the
+strip-to-Bubble morph are the signature interactions. No shipping raster assets.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review,
 the verdict, DESIGN.md, and every shipping raster carrying its provenance

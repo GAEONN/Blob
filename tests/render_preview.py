@@ -92,10 +92,12 @@ def main(output, gaming=False, errors=False):
              ("System / compact", True, "blob", "now", 0, False),
              ("Hardware / details", False, "blob", "details", 0, False),
              ("Hardware / mode bubble", False, "blob", "bubble", 0, False),
+             ("Sound / status bubble", False, "sound", "bubble", 0, False),
              ("Search", True, "music", "search", 0, False),
              ("Playing Next", False, "music", "queue", 0, False)]
     if gaming:
-        cases = [("Gaming / regular — synthetic data", False, "gaming", "now", 0, False),
+        cases = [("Gaming / horizontal — synthetic data", False, "gaming", "now", 0, False),
+                 ("Gaming / vertical — synthetic data", False, "gaming", "vertical", 0, False),
                  ("Gaming / FPS bubble", False, "gaming", "bubble", 0, False),
                  ("Gaming / unavailable bubble", False, "gaming", "bubble", 2, False),
                  ("Gaming / compact — synthetic data", True, "gaming", "now", 0, False),
@@ -113,7 +115,9 @@ def main(output, gaming=False, errors=False):
         if page == "blob":
             p.tabs_t = 0
         p.hardware_view = "bubble" if page == "blob" and view == "bubble" else "card"
-        p.gaming_view = "bubble" if page == "gaming" and view == "bubble" else "strip"
+        p.sound_view = "bubble" if page == "sound" and view == "bubble" else "card"
+        p.gaming_view = ("bubble" if page == "gaming" and view == "bubble" else
+                         "vertical" if page == "gaming" and view == "vertical" else "horizontal")
         if title == "Music / volume panel":
             p.music_menu = "volume"
         elif title == "Artwork / options panel":
@@ -154,6 +158,7 @@ def main(output, gaming=False, errors=False):
         renderer.set_lenses(lenses)
         bubble = ((page == "blob" and p.hardware_view == "bubble") or
                   (page == "music" and p.music_view == "bubble") or
+                  (page == "sound" and p.sound_view == "bubble") or
                   (page == "gaming" and p.gaming_view == "bubble"))
         renderer.set_panel_shape(1 if bubble else 0)
         audio = (.85, .55, .9) if page == "music" and p.music_view == "bubble" else (0, 0, 0)

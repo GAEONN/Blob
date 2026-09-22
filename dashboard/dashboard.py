@@ -20,6 +20,10 @@ loader.exec_module(base)
 glass, engine, user32 = base.glass, base.engine, base.user32
 BasePanel, BaseRenderer = base.Panel, glass.GlassRenderer
 
+# Shared with unified.py: the Dashboard can hand control back to SmallBlob
+# without importing the launcher and creating a module cycle.
+VIEW_SMALL = 0x8010
+
 
 class DashboardPanel(BasePanel):
     WIDE = GAMING_WIDE = 1120
@@ -102,8 +106,10 @@ class DashboardPanel(BasePanel):
         S, W, H = self.S, self.w, self.height(s)
         self.label(26*S,24*S,'Blob',25,'Semibold Display',255)
         self.label(95*S,34*S,'Overview',13,'Regular',205)
-        self.button('dash:settings','Settings',(W-310*S,22*S,W-228*S,54*S),self.settings_open)
-        self.button('dash:dock','Game dock',(W-218*S,22*S,W-116*S,54*S))
+        self.button('dash:small','SmallBlob',(155*S,22*S,250*S,54*S))
+        self.button('dash:settings','Settings',(W-350*S,22*S,W-246*S,54*S),self.settings_open)
+        self.button('dash:dock','Game dock',(W-236*S,22*S,W-142*S,54*S))
+        self.glass_button('dash:minimize',W-120*S,38*S,14*S,'\uE921',10,always=True)
         self.glass_button('dash:window',W-80*S,38*S,16*S,'\uE923' if self.fullscreen else '\uE922',10)
         self.glass_button('dash:close',W-38*S,38*S,16*S,'\uE8BB',10)
         top, bottom, gap, inset = 78*S,H-18*S,16*S,18*S
@@ -319,6 +325,11 @@ class DashboardRenderer(BaseRenderer):
         self.bg.repeat_x=self.bg.repeat_y=False
         self.prog['bg_size'].value=(self.cap.shape[1],self.cap.shape[0])
         self._last_key=None
+        self._last_capture=0.0
+        self._bg_dirty=True
+        self._bg_uploaded=(0,0)
+        self._dib_rect=None
+        self._readback=np.empty(self.W*self.H*4,dtype=np.uint8)
 
 
 class DashboardApp(base.App):
@@ -346,8 +357,8 @@ class DashboardApp(base.App):
     def bubble_drag_active(self):return False
 
     def _schedule(self,animating=True):
-        # The full-screen compositor is capped at 30 Hz; narrow dock at 60 Hz.
-        want=16 if self.panel.dock else 33
+        # Keep the full app and detached dock on one stable 60 FPS cadence.
+        want=16
         if self.interval!=want:
             self.interval=want;user32.SetTimer(self.hwnd,1,want,None)
 
@@ -393,7 +404,7 @@ class DashboardApp(base.App):
     def _frame(self):
         now=time.perf_counter()
         # Mouse messages also enter frame(); enforce the same budget there.
-        if now-self.last_frame < (1/60 if self.panel.dock else 1/30):return
+        if now-self.last_frame < 1/60:return
         self.update_gaming_modifier_drag()
         dt=min(.05,now-self.last_frame);self.last_frame=now
         self.springs.step(dt)
@@ -428,8 +439,9 @@ class DashboardApp(base.App):
             self.glass.set_viz([v/self.ss for v in viz],base.music_visualizer_bands(self.sound.spectrum,self.sound.reactive_peak),fade)
         else:self.glass.set_viz(None,None,0)
         pw,ph=width.x/self.ss,height.x/self.ss
-        force=self.frame_dirty or self.springs.moving or bool(viz) or self.drag is not None
-        if self.glass.capture(*self.pos,pw,ph,force,panel_y=self.glass.sp):
+        background_dirty=self.frame_dirty
+        background_changed=self.glass.capture(*self.pos,pw,ph,background_dirty,panel_y=self.glass.sp)
+        if background_changed or background_dirty or self.springs.moving or bool(viz) or self.drag is not None:
             self.glass.render(self.hwnd,*self.pos,pw,ph,fade,(-.55,-.83),self.glassiness,panel_y=self.glass.sp)
             self.frame_dirty=False
         if fade>=.999:self.old_controls=[]
@@ -495,8 +507,16 @@ class DashboardApp(base.App):
 
     def click(self,key,x):
         self.panel.focus_key=None
-        if key in ('dash:dock','dock:dashboard','dock:expand','dock:collapse','dock:lock',
+        if key in ('dash:small','dash:minimize','dash:dock','dock:dashboard','dock:expand','dock:collapse','dock:lock',
                    'dash:settings','dash:window','dash:close'):
+            if key=='dash:small':
+                user32.PostMessageW(self.hwnd,VIEW_SMALL,0,0)
+                return
+            if key=='dash:minimize':
+                # Use the native minimize command so the borderless Dashboard
+                # stays alive and can be restored from the tray/F10.
+                user32.PostMessageW(self.hwnd,0x0112,0xF020,0)
+                return
             if key=='dash:dock':self.enter_dock()
             elif key=='dock:dashboard':self.leave_dock()
             elif key=='dock:lock':self._overlay_unlocked=False;self.apply_gaming_input()

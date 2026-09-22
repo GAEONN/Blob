@@ -6,7 +6,7 @@ import sys
 from PIL import Image, ImageDraw
 
 here = os.path.dirname(os.path.abspath(__file__))
-ico = os.path.join(here, "blob-v4-glass.ico")
+ico = os.path.join(here, "blob-v5-glass.ico")
 
 S = 256
 img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -21,12 +21,12 @@ pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
 target = os.path.join(here, "app.pyw")
 ps = f"""
 $d = [Environment]::GetFolderPath('Desktop')
-$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Blob v4.lnk'))
+$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Blob v5.lnk'))
 $s.TargetPath = '{pythonw}'
 $s.Arguments = '"{target}"'
 $s.WorkingDirectory = '{here}'
 $s.IconLocation = '{ico}'
-$s.Description = 'Blob v4 - SmallBlob and Dashboard in one app (F10 switches views)'
+$s.Description = 'Blob v5 - SmallBlob and Dashboard in one app (F10 switches views)'
 $s.Save()
 """
 subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
