@@ -20,6 +20,26 @@ strip into one interface.
 
 It is built with Python, OpenGL, and native Win32 APIs—no browser window and no Electron runtime.
 
+## Gallery
+
+Offline renders of the v5 layouts (sample data, drawn with `tests/render_preview.py`).
+
+**Gaming strip** — regular, with the view menu open, and compact:
+
+![Gaming strip](docs/screenshots/horizontal-regular.png)
+![Gaming strip with the view menu open](docs/screenshots/horizontal-menu-open.png)
+![Compact gaming strip](docs/screenshots/horizontal-compact.png)
+
+**Music, System, Sound and Settings** — cards, bubbles and the moving album backdrop:
+
+<img src="docs/screenshots/latest-music-preview-v5.png" alt="Music, System, Sound and Settings views" width="720">
+
+**Bubble states** — the gaming strip docked beside MiniBlob's bubbles:
+
+<img src="docs/screenshots/latest-bubble-preview.png" alt="Bubble states" width="340">
+
+Earlier gaming-strip layout studies are in [docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).
+
 ## Install
 
 Open **PowerShell** and run:
