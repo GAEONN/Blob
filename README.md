@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GAEONN/Blob/releases/latest"><img src="https://img.shields.io/github/v/release/GAEONN/Blob?label=download&style=for-the-badge&color=ff7a45" alt="Download the latest version"></a>
+  <a href="https://github.com/GAEONN/Blob/releases/latest"><img src="https://img.shields.io/github/v/release/GAEONN/Blob?label=download&style=for-the-badge&color=ff7a45&sort=semver" alt="Download the latest version"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D6?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows 11">
   <img src="https://img.shields.io/badge/price-free-2ea44f?style=for-the-badge" alt="Free">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/GAEONN/Blob?style=for-the-badge" alt="MIT license"></a>
