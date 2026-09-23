@@ -11,8 +11,8 @@ The Dashboard top rail also opens SmallBlob directly and includes a native minim
 The game dock expands downward and starts click-through. The shared default lock shortcut
 is **Ctrl+Alt+V**, or your migrated shortcut. Do not run older enhancers alongside v5.
 
-Blob v5 is the current release and is intended to live on `main`. Historical **v3.0.0** and
-**v4.0.1** tags remain available; **v5.0.0** is the current paired application release.
+Blob v5 is the current application on `main`. Historical **v3.0.0**, **v4.0.1**, and the
+initial **v5.0.0** release tag remain available for rollback.
 
 Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
 liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
@@ -25,12 +25,13 @@ It is built with Python, OpenGL, and native Win32 APIs—no browser window and n
 Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/GAEONN/Blob/v5.0.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
 ```
 
-The installer downloads this pinned release to `%LOCALAPPDATA%\Programs\Blob-v5`, creates an isolated Python
-environment, installs the required packages, creates shortcuts, verifies the installation, and
-launches the app. It creates **Blob v5** on the Desktop without replacing older shortcuts.
+The installer downloads the current `main` source to `%LOCALAPPDATA%\Programs\Blob-v5`, creates an
+isolated Python environment, installs the required packages, prepares optional integrations,
+creates a desktop shortcut, verifies the installation, and launches the app. It preserves the
+separate `%LOCALAPPDATA%\Blob-v5` preferences folder.
 Preferences live in `%LOCALAPPDATA%\Blob-v5`; first launch copies the latest legacy preferences without
 editing the original and leaves audio boost off. Re-running repairs this v5 installation.
 
@@ -46,6 +47,26 @@ Windows metrics remain usable while optional integrations are unavailable.
 
 > Review [`install.ps1`](install.ps1) before running the one-line installer if you prefer to inspect
 > remote scripts before execution.
+
+## Update
+
+To update an existing installation to the latest GitHub `main` build, run this in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/GAEONN/Blob/main/update.ps1 | iex
+```
+
+The updater downloads the current installer, closes only the running Blob process, preserves your
+preferences and optional components, refreshes the application files and dependencies, recreates
+the shortcut, verifies the result, and launches Blob again. To update without launching it:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/GAEONN/Blob/main/update.ps1))) -NoLaunch
+```
+
+If you downloaded the repository as a ZIP, run `Install Blob.cmd` once, or use
+`powershell -ExecutionPolicy Bypass -File .\install.ps1`. Re-running the installer is safe and
+repairs the same installation.
 
 ## What Blob includes
 
@@ -164,7 +185,7 @@ avoid recursive self-capture.
 Clone the repository and run the installer locally:
 
 ```powershell
-git clone --branch v5.0.0 https://github.com/GAEONN/Blob.git
+git clone --branch main https://github.com/GAEONN/Blob.git
 cd Blob
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
@@ -175,6 +196,12 @@ deliberately partial setups:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
   -SkipAudio -SkipSensors -SkipPresentMon -NoLaunch
+```
+
+For a local checkout, the update-capable command is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Update
 ```
 
 To start an installed checkout manually, use `Launch Blob.cmd`, the desktop shortcut, or:

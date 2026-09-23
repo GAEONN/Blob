@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$NoLaunch,
+    [switch]$Update,
     [switch]$SkipPresentMon,
     [switch]$SkipSensors,
     [switch]$SkipAudio,
@@ -41,12 +42,24 @@ function Install-Python {
     return (Find-Python)
 }
 
+function Stop-BlobProcess([string]$Root) {
+    $appPath = [IO.Path]::GetFullPath((Join-Path $Root 'app.pyw'))
+    $running = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
+        Where-Object { $_.CommandLine -and
+            $_.CommandLine.IndexOf($appPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    foreach ($process in $running) {
+        Write-Host "Stopping the running Blob instance (PID $($process.ProcessId))..."
+        Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+    }
+}
+
 Write-Host ''
-Write-Host 'Blob v5.0.0 installer' -ForegroundColor White
+Write-Host 'Blob v5 installer' -ForegroundColor White
 Write-Host 'Core app + FPS + universal sensors + system-wide audio' -ForegroundColor DarkGray
 Write-Host ''
 
-$localCheckout = $PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'blob.pyw'))
+$localCheckout = (-not $Update) -and $PSScriptRoot -and
+    (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'blob.pyw'))
 $temporaryDownload = $null
 if ($localCheckout) {
     $installRoot = $PSScriptRoot
@@ -55,7 +68,7 @@ if ($localCheckout) {
 }
 
 if ($DryRun) {
-    Write-Step 1 "Install or update Blob at $installRoot"
+    Write-Step 1 "$(if ($Update) { 'Update' } else { 'Install or update' }) Blob at $installRoot"
     Write-Step 2 'Create an isolated Python environment and install dependencies'
     Write-Step 3 ($(if ($SkipPresentMon) { 'Skip FPS helper' } else { 'Install the verified PresentMon FPS helper' }))
     $systemParts = @()
@@ -67,14 +80,15 @@ if ($DryRun) {
 }
 
 if (-not $localCheckout) {
-    Write-Step 1 'Downloading Blob...'
+    Write-Step 1 'Downloading the current Blob main branch...'
     $temporaryDownload = Join-Path ([IO.Path]::GetTempPath()) ("Blob-install-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $temporaryDownload | Out-Null
     $archive = Join-Path $temporaryDownload 'Blob.zip'
-    Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/GAEONN/Blob/archive/refs/tags/v5.0.0.zip' -OutFile $archive
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/GAEONN/Blob/archive/refs/heads/main.zip' -OutFile $archive
     Expand-Archive -LiteralPath $archive -DestinationPath $temporaryDownload
-    $sourceRoot = Join-Path $temporaryDownload 'Blob-5.0.0'
+    $sourceRoot = Join-Path $temporaryDownload 'Blob-main'
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+    if ($Update) { Stop-BlobProcess $installRoot }
     Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $installRoot -Recurse -Force
 } else {
     Write-Step 1 "Using local checkout: $installRoot"
