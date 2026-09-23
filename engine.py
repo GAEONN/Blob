@@ -24,7 +24,7 @@ from ctypes import wintypes
 import psutil
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", APP_DIR), "Blob")
+DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", APP_DIR), "Blob-before-Yao")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 LOG_PATH = os.path.join(DATA_DIR, "blob.log")
 os.makedirs(DATA_DIR, exist_ok=True)

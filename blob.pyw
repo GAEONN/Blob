@@ -22,7 +22,7 @@ from gaming import GamingMonitor
 from sound import PRESET_ORDER, Sound
 from glass import user32
 
-APP_NAME = "Blob"
+APP_NAME = "Blob — Before Yao"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 FONTS = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Fonts")
 
@@ -1105,7 +1105,7 @@ class Panel:
         rows[rows.index(("head", "Fans")):rows.index(("head", "Fans"))] = [
             ("head", "Gaming"),
             ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
-            ("note", "gaming_tip", "Gaming is click-through. Ctrl+Alt+G or the tray menu unlocks it to move or change views. Lock again before playing. Use borderless games.", None, None),
+            ("note", "gaming_tip", "Gaming is click-through. Ctrl+Alt+B or the tray menu unlocks it to move or change views. Lock again before playing. Use borderless games.", None, None),
         ]
         h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46}
         layouts = []
@@ -1207,7 +1207,8 @@ class App:
         self.startup = startup_enabled()
         self.springs = Springs()
         self.controls, self.old_controls = [], []
-        self.visible = self.pinned = False
+        self.visible = False
+        self.pinned = os.environ.get("BLOB_PINNED") == "1"
         self.gaming_unlocked = False
         if PROFILE is not None:
             self.pinned = True  # profiling: keep the panel up even when focus moves elsewhere
@@ -1249,9 +1250,9 @@ class App:
         self.cur_arrow = user32.LoadCursorW(None, 32512)
         self.apply_gaming_input()
         self.gaming_hotkey_registered = bool(user32.RegisterHotKey(
-            self.hwnd, GAMING_HOTKEY, 0x4003, ord("G")))  # Ctrl+Alt, MOD_NOREPEAT
+            self.hwnd, GAMING_HOTKEY, 0x4003, ord("B")))  # Ctrl+Alt+B: separate from current Blob
         if not self.gaming_hotkey_registered:
-            engine.log("Ctrl+Alt+G is unavailable; use the tray menu to unlock the gaming strip.")
+            engine.log("Ctrl+Alt+B is unavailable; use the tray menu to unlock the gaming strip.")
 
         self.icon = pystray.Icon(APP_NAME, tray_image(None), APP_NAME, menu=pystray.Menu(
             pystray.MenuItem("Open", lambda: user32.PostMessageW(self.hwnd, WM_APP_TOGGLE, 0, 0),
@@ -1424,6 +1425,8 @@ class App:
             m = round(12 * self.S)
             self.pos = [work.right - self.glass.W + self.glass.sp - m,
                         work.bottom - self.glass.H + self.glass.sp - m]  # bottom-right of the work area
+            if os.environ.get("BLOB_PINNED") == "1":
+                self.pos[0] -= round(self.panel.w / self.ss + 24 * self.S)
         self.last_frame = time.perf_counter()
         self.frame_dirty = True
         if self.captureable:
@@ -2108,7 +2111,7 @@ class App:
 if __name__ == "__main__":
     # Importing the layout for tests must not acquire the live app's single-instance lock.
     k32.CreateMutexW.restype = wintypes.HANDLE
-    _mutex = k32.CreateMutexW(None, False, "Local\\BlobTrayApp")
+    _mutex = k32.CreateMutexW(None, False, "Local\\BlobTrayApp-BeforeYao")
     if k32.GetLastError() == 183:
         sys.exit(0)
     try:
