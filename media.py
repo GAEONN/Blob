@@ -152,12 +152,31 @@ class NowPlaying:
     async def _command(self, mgr, cmd):
         s = self._pick(mgr)
         if s is None:
+            core.log(f"media command skipped: no active session for {cmd!r}")
             return
         if cmd == "toggle":
-            await s.try_toggle_play_pause_async()
+            # Apple Music exposes separate Play/Pause commands reliably, while
+            # the generic Toggle command can be accepted without changing the
+            # session state. Read the state immediately before dispatching and
+            # use the explicit command that matches it.
+            info = s.get_playback_info()
+            was_playing = info.playback_status == 4  # GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
+            method = s.try_pause_async if was_playing else s.try_play_async
+            result = await method()
+            core.log(f"media command {'pause' if was_playing else 'play'} "
+                     f"source={s.source_app_user_model_id!r} result={result!r}")
+            # A few older media sessions expose the method but return False.
+            # Keep the generic fallback for those sessions only; do not issue
+            # both commands after a successful explicit request.
+            if result is False:
+                fallback = await s.try_toggle_play_pause_async()
+                core.log(f"media command toggle fallback result={fallback!r}")
         elif cmd == "next":
-            await s.try_skip_next_async()
+            result = await s.try_skip_next_async()
+            core.log(f"media command next source={s.source_app_user_model_id!r} result={result!r}")
         elif cmd == "previous":
-            await s.try_skip_previous_async()
+            result = await s.try_skip_previous_async()
+            core.log(f"media command previous source={s.source_app_user_model_id!r} result={result!r}")
         elif isinstance(cmd, tuple) and cmd[0] == "seek":
-            await s.try_change_playback_position_async(int(cmd[1] * 10_000_000))
+            result = await s.try_change_playback_position_async(int(cmd[1] * 10_000_000))
+            core.log(f"media command seek source={s.source_app_user_model_id!r} result={result!r}")

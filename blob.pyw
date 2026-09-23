@@ -717,6 +717,33 @@ class Panel:
             offset = (self.TOOL_PALETTE_W - 104) * self.S
         return offset + value * self.S
 
+    def bubble_body_key(self):
+        """Return the direct action owned by the primary MiniBlob lobe."""
+        return {
+            "blob": "hcycle",
+            "sound": "toggle:sound",
+            "music": "mbubble:gesture",
+            "gaming": "gcycle",
+            "settings": "settingscycle",
+        }.get(self.page)
+
+    def bubble_body_hit(self, x, y):
+        """Recover the body hit while the transparent palette canvas is morphing.
+
+        The rendered bubble is kept in place while the host canvas grows. During
+        that short handoff the animated width can be between its old and new
+        values, so a stale rectangle may miss the visible body. Use the actual
+        lobe centre as a conservative fallback, but never claim the satellites
+        or tool palette gaps.
+        """
+        key = self.bubble_body_key()
+        if not key or self.tools_open or not self.bubble_main_box():
+            return None
+        cx, cy = self.bubble_x(43), 55 * self.S
+        if math.hypot(x - cx, y - cy) <= 40 * self.S:
+            return key
+        return None
+
     def bubble_main_box(self):
         """Inset fused lobe; the monitor-facing satellite always owns the edge."""
         ox = 0.0
@@ -2584,6 +2611,7 @@ class App:
         self.music_press_active = False
         self.music_hold_fired = False
         self.music_click_pending = False
+        self.music_click_deadline = 0.0
         self.slider_drag = None
         self.pressed = None
         self.hover = None
@@ -3351,12 +3379,26 @@ class App:
             user32.ReleaseCapture()
         if self.music_hold_fired:
             self.music_hold_fired = False
-            return True
-        if self.music_click_pending:
             self.music_click_pending = False
+            self.music_click_deadline = 0.0
+            user32.KillTimer(self.hwnd, 4)
+            return True
+        now = time.perf_counter()
+        if (self.music_click_pending and
+                now <= getattr(self, "music_click_deadline", 0.0)):
+            self.music_click_pending = False
+            self.music_click_deadline = 0.0
             user32.KillTimer(self.hwnd, 4)
             self.media.next()
         else:
+            # A normal tap must feel like a real play/pause button. The old
+            # implementation waited for the double-tap window before toggling,
+            # which made the bubble appear dead and was especially noticeable
+            # when Apple Music was already active. The second tap still becomes
+            # Next, but the first tap is now dispatched immediately.
+            self.music_click_pending = False
+            self.music_click_deadline = now + 0.32
+            self.media.toggle()
             self.music_click_pending = True
             user32.SetTimer(self.hwnd, 4, 280, None)
         return True
@@ -3613,6 +3655,7 @@ class App:
         self.snap = self.mon.snapshot() or self.snap or empty_snapshot()
         self.visible = True
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
+        self.music_click_deadline = 0.0
         self.gaming_modifier_drag = False
         self.dual_control_down = {LEFT_CONTROL: False, RIGHT_CONTROL: False}
         self.dual_control_latched = False
@@ -3651,6 +3694,7 @@ class App:
         self.dual_control_latched = False
         self.hotkey_editing = self.panel.hotkey_editing = False
         self.music_press_active = self.music_hold_fired = self.music_click_pending = False
+        self.music_click_deadline = 0.0
         self.drag_work = None
         user32.KillTimer(self.hwnd, 4)
         user32.KillTimer(self.hwnd, 5)
@@ -4732,7 +4776,7 @@ class App:
                 user32.KillTimer(hwnd, 4)
                 if self.music_click_pending:
                     self.music_click_pending = False
-                    self.media.toggle()
+                    self.music_click_deadline = 0.0
                 return 0
             if msg == WM_TIMER and wp == 5:
                 user32.KillTimer(hwnd, 5)
@@ -4929,6 +4973,14 @@ class App:
             if msg == WM_LBUTTONDOWN:
                 x, y = self.panel_local(lp)
                 h = self.panel.hit(x, y)
+                body_hit = getattr(self.panel, "bubble_body_hit", None)
+                body = body_hit(x, y) if self.bubble_mode and body_hit else None
+                if body and (not h or h.startswith("tool:")):
+                    # Keep the primary lobe draggable through the width/height
+                    # handoff used by the transient tool palette. Tool-lobe
+                    # envelopes may overlap the body while they extrude, but
+                    # the satellite/tool centers remain separate hit targets.
+                    h = body
                 if self.bubble_drag_key(h):
                     self.begin_bubble_drag(h)
                 elif h:

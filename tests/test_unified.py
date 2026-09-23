@@ -238,12 +238,12 @@ class UnifiedTests(unittest.TestCase):
         expected = {
             'engine.py': 'fddf6cd47f896967851540034a6f787732f832a3ba962d50e1865d45ad7f37c3',
             'glass.py': '8380a894dfab1a75dc45131f6b5f122783c50f65d6342c5add63528fada7f8f2',
-            'media.py': '40156698d629532d3edc6fe631e032332c2e0237ebd50fb9af13443f52d96a94',
+                           'media.py': '746b402550e783cd195076795f5f9aacaa7bf6c7a30155c2f6153f144fe92807',
             'sound.py': 'cdb5fc4bd15a60f2509415de68fd6cea61e219ca8888ec078c5b92e909f874b1',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
-            'blob.pyw': '462be233316b3fc525a4e7ce6c109a27b6d2652e6ab8cc2b502e173a87923869',
+                           'blob.pyw': 'c24984c34cac6910fefe150237596ffe9dc4923676420a456662970d696ae473',
         }
         for name, digest in expected.items():
             source = (u.ROOT/name).read_text(encoding='utf-8').split('if __name__ == "__main__":')[0]

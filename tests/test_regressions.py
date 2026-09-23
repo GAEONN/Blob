@@ -570,6 +570,35 @@ class MediaTests(unittest.TestCase):
         self.assertIsNone(m.art)
         self.assertFalse(m.can_seek)
 
+    def test_toggle_dispatches_explicit_pause_for_playing_session(self):
+        class Session:
+            source_app_user_model_id = "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App"
+
+            def __init__(self):
+                self.pause = Mock(return_value=True)
+                self.play = Mock(return_value=True)
+                self.toggle_play_pause = Mock(return_value=True)
+
+            def get_playback_info(self):
+                return NS(playback_status=4)
+
+            async def try_pause_async(self):
+                return self.pause()
+
+            async def try_play_async(self):
+                return self.play()
+
+            async def try_toggle_play_pause_async(self):
+                return self.toggle_play_pause()
+
+        m = self.player()
+        session = Session()
+        with patch.object(m, "_pick", return_value=session):
+            asyncio.run(m._command(NS(), "toggle"))
+        session.pause.assert_called_once_with()
+        session.play.assert_not_called()
+        session.toggle_play_pause.assert_not_called()
+
 
 class RendererTests(unittest.TestCase):
     def test_control_lenses_use_layout_scale(self):
@@ -880,14 +909,32 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(app.music_click_pending)
             app.start_music_bubble_press()
             app.finish_music_bubble_press()
+            app.media.toggle.assert_called_once_with()
             app.media.next.assert_called_once_with()
-            app.media.toggle.assert_not_called()
 
             app.start_music_bubble_press()
             app.wndproc(app.hwnd, blob.WM_TIMER, 5, 0)
             app.media.previous.assert_called_once_with()
             app.finish_music_bubble_press()
             self.assertFalse(app.music_click_pending)
+
+    def test_music_bubble_single_tap_is_immediate_and_timer_only_clears_double_tap_window(self):
+        app = blob.App.__new__(blob.App)
+        app.hwnd = 101
+        app.panel = NS(page="music", music_view="bubble")
+        app.visible = True
+        app.gaming_modifier_drag = False
+        app.media = Mock()
+        app.music_press_active = app.music_hold_fired = app.music_click_pending = False
+        with patch.object(blob.user32, "GetCapture", return_value=app.hwnd), \
+             patch.object(blob.user32, "SetTimer"), patch.object(blob.user32, "KillTimer"), \
+             patch.object(blob.user32, "ReleaseCapture"):
+            app.start_music_bubble_press()
+            app.finish_music_bubble_press()
+            app.media.toggle.assert_called_once_with()
+            self.assertTrue(app.music_click_pending)
+            app.wndproc(app.hwnd, blob.WM_TIMER, 4, 0)
+        self.assertFalse(app.music_click_pending)
 
     def test_music_reactivity_toggle_is_shared_and_persisted(self):
         app = blob.App.__new__(blob.App)
@@ -900,6 +947,14 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(app.panel.options["musicreactive"])
         self.assertFalse(cfg["options"]["musicreactive"])
         save.assert_called_once_with(cfg)
+
+    def test_sound_toggle_routes_to_audio_controller(self):
+        app = blob.App.__new__(blob.App)
+        app.panel = NS(options={})
+        app.sound = NS(enabled=False, set_enabled=Mock())
+        app.draw_content = app.frame = Mock()
+        app.click("toggle:sound", 0)
+        app.sound.set_enabled.assert_called_once_with(True)
 
     def test_sound_output_menu_selects_named_destination(self):
         app = blob.App.__new__(blob.App)

@@ -266,6 +266,31 @@ class GamingInputTests(unittest.TestCase):
         self.assertEqual(a.drag_click, "mbubble:gesture")
         a.start_music_bubble_press.assert_called_once_with()
 
+    def test_unlocked_music_bubble_body_can_drag_without_triggering_playback(self):
+        a = self.app
+        a.panel = NS(page="music", music_view="bubble", tabs_open=False,
+                     hit=Mock(return_value="mbubble:gesture"))
+        a.bubble_unlocked, a.drag = True, None
+        a.panel_local = Mock(return_value=(43, 55))
+        a.media = Mock()
+        a.pos, a.pinned, a.captureable = [100, 80], False, False
+        a.vel, a.last_frame = blob.np.zeros(2), 0
+        a.music_press_active = a.music_hold_fired = a.music_click_pending = False
+        a._panel_work_area = Mock(return_value=None)
+        a._drag_work_for_cursor = Mock(return_value=None)
+        a.maybe_flip_panel_side = Mock()
+        a.keep_panel_in_work_area = Mock()
+        a.finish_panel_drag = Mock()
+        a.refresh_backdrop = Mock()
+
+        with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (170, 130)]), \
+             patch.object(blob.user32, "GetCapture", return_value=a.hwnd):
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+            a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
+            a.wndproc(101, blob.WM_LBUTTONUP, 0, 0)
+        self.assertEqual(a.pos, [140, 110])
+        a.media.toggle.assert_not_called()
+
     def test_tool_palette_button_never_becomes_a_drag_handle(self):
         a = self.app
         a.panel = NS(page="blob", hardware_view="bubble", tabs_open=False,
