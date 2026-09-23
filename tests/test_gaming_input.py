@@ -18,6 +18,7 @@ class GamingInputTests(unittest.TestCase):
         a.drag, a.slider_drag, a.pressed = (10, 10), None, "tabs"
         a.drag_click, a.drag_origin, a.drag_moved = None, None, False
         a.music_press_active = a.music_hold_fired = a.music_click_pending = False
+        a.hotkey_editing, a.hotkey_swallow = False, set()
         a.hover, a.mouse_xy, a.mouse_in = "tabs", (12, 12), True
         a.attached, a.detaching = "tabs", None
         a.cur_move = 303
@@ -56,12 +57,12 @@ class GamingInputTests(unittest.TestCase):
         self.assertTrue(self.app.gaming_locked)
         self.assertFalse(self.app.panel.tabs_open)
 
-    def test_ctrl_alt_temporarily_enables_drag_without_unlocking(self):
+    def test_left_and_right_ctrl_temporarily_enable_drag_without_unlocking(self):
         a = self.app
         a.drag, a.pos, a.captureable = None, [100, 80], False
         a.pinned, a.vel, a.last_frame = False, blob.np.zeros(2), 0
         a.frame = Mock()
-        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk in (0x11, 0x12) else 0
+        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk in (blob.LEFT_CONTROL, blob.RIGHT_CONTROL) else 0
 
         a.update_gaming_modifier_drag()
 
@@ -78,6 +79,35 @@ class GamingInputTests(unittest.TestCase):
         self.assertEqual(a.wndproc(101, blob.WM_LBUTTONUP, 0, 0), 0)
         self.assertIsNone(a.drag)
         self.u.ReleaseCapture.assert_called_once()
+
+    def test_left_and_right_ctrl_post_one_lock_toggle(self):
+        a = self.app
+        a.visible = True
+        a.hotkey_editing = False
+        a.dual_control_down = {blob.LEFT_CONTROL: False, blob.RIGHT_CONTROL: False}
+        a.dual_control_latched = False
+        key = blob.KBDLLHOOKSTRUCT()
+        key.flags = 0
+        key.vkCode = blob.LEFT_CONTROL
+        with patch.object(blob.ctypes, "cast", return_value=NS(contents=key)):
+            a._keyboard_hook(0, 0x100, 0)
+            key.vkCode = blob.RIGHT_CONTROL
+            a._keyboard_hook(0, 0x100, 0)
+        self.u.PostMessageW.assert_called_once_with(101, blob.WM_APP_GAMING_LOCK, 0, 0)
+        self.assertTrue(a.dual_control_latched)
+
+    def test_ctrl_release_rearms_dual_ctrl_command(self):
+        a = self.app
+        a.visible = True
+        a.hotkey_editing = False
+        a.dual_control_down = {blob.LEFT_CONTROL: True, blob.RIGHT_CONTROL: True}
+        a.dual_control_latched = True
+        key = blob.KBDLLHOOKSTRUCT()
+        key.flags = 0
+        key.vkCode = blob.LEFT_CONTROL
+        with patch.object(blob.ctypes, "cast", return_value=NS(contents=key)):
+            a._keyboard_hook(0, 0x101, 0)
+        self.assertFalse(a.dual_control_latched)
 
     def test_releasing_ctrl_alt_restores_click_through(self):
         self.app.gaming_modifier_drag = True

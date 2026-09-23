@@ -95,6 +95,9 @@ WM_APP_GAMING_LOCK, WM_HOTKEY, GAMING_HOTKEY = 0x8004, 0x312, 1
 WS_EX_TRANSPARENT, WS_EX_NOACTIVATE = 0x20, 0x08000000
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
 DEFAULT_HOTKEY = (MOD_CONTROL | MOD_ALT, ord("V"))
+LEFT_CONTROL = 0xA2
+RIGHT_CONTROL = 0xA3
+DUAL_CONTROL_LABEL = "Left Ctrl + Right Ctrl"
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -1483,7 +1486,7 @@ class App:
         self.panel.gaming_view = cfg.get("gaming_view", "strip")
         self.panel.options = dict(cfg.get("options", {}))
         self.hotkey_mods, self.hotkey_vk = parse_hotkey(cfg.get("overlay_hotkey", {}))
-        self.panel.hotkey_label = hotkey_label(self.hotkey_mods, self.hotkey_vk)
+        self.panel.hotkey_label = DUAL_CONTROL_LABEL
         self.startup = startup_enabled()
         self.springs = Springs()
         self.springs.get("width", self.panel.w, k=185, zeta=0.86)
@@ -1506,6 +1509,8 @@ class App:
         self.gaming_modifier_drag = False
         self.hotkey_editing = False
         self.hotkey_swallow = set()
+        self.dual_control_down = {LEFT_CONTROL: False, RIGHT_CONTROL: False}
+        self.dual_control_latched = False
         if PROFILE is not None:
             self.pinned = True  # profiling: keep the panel up even when focus moves elsewhere
         self.pos = None  # window top-left (screen px)
@@ -1552,11 +1557,10 @@ class App:
         self.cur_arrow = user32.LoadCursorW(None, 32512)
         self.cur_move = user32.LoadCursorW(None, 32646)
         self.apply_gaming_input()
-        self.gaming_hotkey_registered = bool(user32.RegisterHotKey(
-            self.hwnd, GAMING_HOTKEY, self.hotkey_mods | MOD_NOREPEAT, self.hotkey_vk))
-        if not self.gaming_hotkey_registered:
-            self.panel.hotkey_error = "Shortcut is already in use"
-            engine.log(f"{self.panel.hotkey_label} is unavailable; use the tray menu to unlock the overlay.")
+        # RegisterHotKey cannot distinguish the physical left and right Ctrl
+        # keys and can be claimed by a game or another Blob build. The global
+        # low-level hook handles the dedicated two-control chord instead.
+        self.gaming_hotkey_registered = False
 
         self.icon = pystray.Icon(APP_NAME, tray_image(None), APP_NAME, menu=pystray.Menu(
             pystray.MenuItem("Open", lambda: user32.PostMessageW(self.hwnd, WM_APP_TOGGLE, 0, 0),
@@ -1839,12 +1843,11 @@ class App:
         self._overlay_unlocked = bool(value)
 
     def hotkey_modifiers_held(self):
-        mods = getattr(self, "hotkey_mods", DEFAULT_HOTKEY[0])
         held = lambda vk: bool(user32.GetAsyncKeyState(vk) & 0x8000)
-        checks = ((MOD_CONTROL, (0x11,)), (MOD_ALT, (0x12,)), (MOD_SHIFT, (0x10,)),
-                  (MOD_WIN, (0x5B, 0x5C)))
-        return bool(mods) and all(not (mods & flag) or any(held(vk) for vk in keys)
-                                  for flag, keys in checks)
+        # Use the same physical chord for temporary FPS-strip dragging. A
+        # generic Ctrl state is unreliable when a game consumes or remaps one
+        # side of the modifier.
+        return held(LEFT_CONTROL) and held(RIGHT_CONTROL)
 
     def update_gaming_modifier_drag(self):
         """Temporarily accept drag input while the configured shortcut modifiers are held."""
@@ -2744,6 +2747,20 @@ class App:
                         if not down:
                             self.hotkey_swallow.discard(k.vkCode)
                         return 1
+                    if k.vkCode in (LEFT_CONTROL, RIGHT_CONTROL):
+                        states = getattr(self, "dual_control_down", {
+                            LEFT_CONTROL: False, RIGHT_CONTROL: False})
+                        self.dual_control_down = states
+                        states[k.vkCode] = down
+                        if down and not self.hotkey_editing and not self.dual_control_latched \
+                                and states[LEFT_CONTROL] and states[RIGHT_CONTROL]:
+                            # Post instead of changing layered-window styles
+                            # inside the hook callback. This still works when
+                            # the game owns focus, and the latch prevents repeats.
+                            self.dual_control_latched = True
+                            user32.PostMessageW(self.hwnd, WM_APP_GAMING_LOCK, 0, 0)
+                        elif not down:
+                            self.dual_control_latched = False
                     if self.hotkey_editing:
                         if down:
                             self.hotkey_swallow.add(k.vkCode)
