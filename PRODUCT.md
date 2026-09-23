@@ -6,7 +6,7 @@
 process and one native window. Tray mode commands or local F10 switch presentations without
 recreating audio/media/telemetry controllers. The app uses a single `%LOCALAPPDATA%\Blob-v5`
 profile, isolated from legacy versions. Shared options carry across views; layout state stays
-per-view. Dashboard's game dock starts locked. See [V5-NOTES.md](V5-NOTES.md) for release,
+per-view. Dashboard's game dock starts locked. See [V5-NOTES.md](docs/V5-NOTES.md) for release,
 installation and verification boundaries. The SmallBlob behavior descriptions below apply
 within the compact presentation unless explicitly overridden by this host contract.
 
@@ -113,6 +113,6 @@ distinct sensors. A stopped fan remains 0 RPM; missing and invalid readings rema
 This source contains no fan-control writes; mode choices are monitoring preferences.
 
 Current v5 evidence: `blob.pyw`, `unified.py`, `glass.py`, `reactive.py`, `engine.py`,
-`V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview art and telemetry are synthetic test fixtures, not new
+`docs/V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview art and telemetry are synthetic test fixtures, not new
 shipping assets. Provider fixtures and the reported local ASUS check are not multi-PC testing
 or certification. This documentation reconciliation adds no runtime validation claim.

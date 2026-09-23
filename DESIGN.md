@@ -317,7 +317,7 @@ artist in Apple Music rather than relying on a stale queue index.
 
 Current v5 source check: `blob.pyw` and `unified.py` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
 `reactive.py` (relative transients), `engine.py` (provider/ID and zero-RPM preservation),
-`V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview artwork is synthetic test material;
+`docs/V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview artwork is synthetic test material;
 no new shipping raster or multi-PC validation is claimed. Provider and fan-control limits
 remain product facts in PRODUCT.md.
 

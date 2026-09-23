@@ -1,94 +1,166 @@
-# Blob v5 — SmallBlob + Dashboard
+<p align="center">
+  <img src="blob-logo.png" alt="Blob logo" width="120">
+</p>
 
-One application, two presentations: the SmallBlob layouts and the large
-Dashboard showing Music, System, Sound and Gaming together. They share one window, tray,
-audio controller, media session, sensor monitor and settings profile. Switching does not
-restart playback or create another DSP engine. See [V5-NOTES.md](V5-NOTES.md).
+<h1 align="center">Blob</h1>
 
-Right-click the tray icon → **SmallBlob / Dashboard / Game dock**, or press **F10 while
-Blob is focused** to switch between small and full views. F11 resizes Dashboard only.
-The Dashboard top rail also opens SmallBlob directly and includes a native minimize control.
-The game dock expands downward and starts click-through. The shared default lock shortcut
-is **Ctrl+Alt+V**, or your migrated shortcut. Do not run older enhancers alongside v5.
+<p align="center">
+  <b>A floating liquid-glass control panel for Windows</b><br>
+  Music controls, PC temperatures, sound enhancement and an in-game FPS counter — in one small, beautiful window.
+</p>
 
-Blob v5 is the current application on `main`. Historical **v3.0.0**, **v4.0.1**, and the
-initial **v5.0.0** release tag remain available for rollback.
+<p align="center">
+  <a href="https://github.com/GAEONN/Blob/releases/latest"><img src="https://img.shields.io/github/v/release/GAEONN/Blob?label=download&style=for-the-badge&color=ff7a45" alt="Download the latest version"></a>
+  <img src="https://img.shields.io/badge/Windows-11-0078D6?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows 11">
+  <img src="https://img.shields.io/badge/price-free-2ea44f?style=for-the-badge" alt="Free">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/GAEONN/Blob?style=for-the-badge" alt="MIT license"></a>
+</p>
 
-Blob is a small, GPU-rendered control surface for Windows. It floats above the desktop as real-time
-liquid glass and brings hardware monitoring, system audio, media controls, and an in-game performance
-strip into one interface.
+<p align="center">
+  <img src="docs/screenshots/horizontal-menu-open.png" alt="Blob's gaming strip" width="680">
+</p>
 
-It is built with Python, OpenGL, and native Win32 APIs—no browser window and no Electron runtime.
+## What is Blob?
 
-## Gallery
+Blob sits on your desktop like a drop of glass. It shows what's playing (Spotify, YouTube, Apple
+Music and more) and lets you pause or skip, tells you how hot your CPU and graphics card are, can
+make your PC's sound louder and clearer, and shows your frames per second while you play games.
+It's free, it doesn't show ads, and it doesn't collect your data.
 
-Offline renders of the v5 layouts (sample data, drawn with `tests/render_preview.py`).
+## Download and install
 
-**Gaming strip** — regular, with the view menu open, and compact:
+It takes about 5 minutes. You don't need to know anything about coding.
+
+1. **[Download the installer (Install-Blob.cmd)](https://github.com/GAEONN/Blob/releases/latest/download/Install-Blob.cmd)**
+2. Open your **Downloads** folder and **double-click `Install-Blob.cmd`**.
+   - If Windows says *"Windows protected your PC"*, click **More info → Run anyway**.
+     If your browser asks whether to keep the file, choose **Keep**.
+3. A black window shows the progress. When Windows asks *"Do you want to allow this app to make
+   changes?"*, click **Yes** — this installs the optional sensor, sound and FPS helpers.
+
+Blob opens by itself when it's done, and a **Blob v5** icon appears on your desktop.
+**Restart your PC once** afterwards so the sound and FPS features finish setting up.
+
+<details>
+<summary><b>Prefer typing a command?</b> (same result)</summary>
+
+Right-click the **Start** button, choose **Terminal**, paste this line and press **Enter**:
+
+```powershell
+irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
+```
+
+</details>
+
+### What you need
+
+- **Windows 11** (64-bit)
+- An internet connection during installation
+- That's it — the installer sets up everything else, including Python, automatically.
+
+## How to use it
+
+| To… | Do this |
+| --- | --- |
+| Show or hide Blob | Click the **Blob icon** near the clock (bottom-right of the taskbar). You may need to click **^** to see it. |
+| Switch between the small view and the big Dashboard | Press **F10** while Blob is selected, or right-click the Blob icon → **SmallBlob / Dashboard** |
+| Move Blob | Drag it anywhere |
+| Let your mouse click *through* Blob (for games) | Press **Ctrl + Alt + V** to lock it; press again to unlock |
+| Start Blob with Windows | Right-click the Blob icon → **Start with Windows** |
+| Close Blob | Right-click the Blob icon → **Exit Blob** |
+
+Each view — **System**, **Sound**, **Music** and **Gaming** — can also shrink into a small bubble.
+The [feature guide](#feature-guide) below explains every button.
+
+## Update to the newest version
+
+**[Download Update-Blob.cmd](https://github.com/GAEONN/Blob/releases/latest/download/Update-Blob.cmd)** and double-click it.
+It closes Blob, installs the latest version, keeps all your settings, and opens Blob again.
+
+## Uninstall
+
+1. Right-click the Blob icon near the clock → turn off **Start with Windows** → **Exit Blob**.
+2. Open File Explorer, paste `%LOCALAPPDATA%\Programs` into the address bar, press Enter, and delete
+   the **Blob-v5** folder. Do the same for `%LOCALAPPDATA%` and its **Blob-v5** folder (your settings).
+3. Delete the **Blob v5** shortcut from your desktop.
+
+Optional helpers the installer may have added (safe to keep, or remove if you like):
+the **Blob Sensors** task in *Task Scheduler*, **PawnIO** in *Settings → Apps*, and the
+**VB-CABLE** audio driver (run its setup from [vb-audio.com/Cable](https://vb-audio.com/Cable/) and choose *Remove*).
+
+## Common questions
+
+<details>
+<summary><b>Is Blob safe?</b></summary>
+
+Yes. All of Blob's code is public on this page, so anyone can check exactly what it does. It doesn't
+send your data anywhere, doesn't inject into games, and doesn't touch anti-cheat. Windows shows a
+warning for the installer only because it isn't a paid, signed app.
+</details>
+
+<details>
+<summary><b>I installed it but I can't see Blob.</b></summary>
+
+Click the small **^** arrow near the clock and click the Blob icon. If there's no icon, double-click
+the **Blob v5** shortcut on your desktop.
+</details>
+
+<details>
+<summary><b>Temperatures or fan speeds say "unavailable".</b></summary>
+
+Some PCs don't share this information with Windows. Restart once after installing so the sensor
+helper can start. If it's still missing, your PC's hardware doesn't expose that sensor.
+</details>
+
+<details>
+<summary><b>The FPS counter shows nothing.</b></summary>
+
+Sign out of Windows and back in once after installing (or restart). Play in **windowed** or
+**borderless** mode — true fullscreen games can hide overlays.
+</details>
+
+<details>
+<summary><b>Sound enhancement doesn't work.</b></summary>
+
+Restart your PC once after installing so the VB-CABLE audio driver finishes setting up, then turn
+Sound on in Blob. If you use FxSound, click **Use Blob audio** in Blob's Sound view — the two can't
+run at the same time.
+</details>
+
+<details>
+<summary><b>Blob doesn't appear in my screenshots or recordings.</b></summary>
+
+That's on purpose, so the glass looks right. Turn on **Include Blob in screenshots and recordings**
+in Blob's Settings.
+</details>
+
+<details>
+<summary><b>I found a problem or have an idea.</b></summary>
+
+[Open an issue](https://github.com/GAEONN/Blob/issues/new) and describe what happened — screenshots help a lot.
+</details>
+
+## Screenshots
+
+**Gaming strip** — regular and compact:
 
 ![Gaming strip](docs/screenshots/horizontal-regular.png)
-![Gaming strip with the view menu open](docs/screenshots/horizontal-menu-open.png)
 ![Compact gaming strip](docs/screenshots/horizontal-compact.png)
 
 **Music, System, Sound and Settings** — cards, bubbles and the moving album backdrop:
 
 <img src="docs/screenshots/latest-music-preview-v5.png" alt="Music, System, Sound and Settings views" width="720">
 
-**Bubble states** — the gaming strip docked beside MiniBlob's bubbles:
+**Bubble states** — the gaming strip beside Blob's bubbles:
 
 <img src="docs/screenshots/latest-bubble-preview.png" alt="Bubble states" width="340">
 
-Earlier gaming-strip layout studies are in [docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).
+<sub>Screenshots are rendered with sample data. Earlier gaming-strip designs are in
+[docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).</sub>
 
-## Install
+## Feature guide
 
-Open **PowerShell** and run:
-
-```powershell
-irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
-```
-
-The installer downloads the current `main` source to `%LOCALAPPDATA%\Programs\Blob-v5`, creates an
-isolated Python environment, installs the required packages, prepares optional integrations,
-creates a desktop shortcut, verifies the installation, and launches the app. It preserves the
-separate `%LOCALAPPDATA%\Blob-v5` preferences folder.
-Preferences live in `%LOCALAPPDATA%\Blob-v5`; first launch copies the latest legacy preferences without
-editing the original and leaves audio boost off. Re-running repairs this v5 installation.
-
-One administrator prompt may be required for optional system integrations:
-
-- **LibreHardwareMonitor + PawnIO** for broader temperature and fan-sensor coverage.
-- **PresentMon** and Performance Log Users membership for real FPS/frame-time capture.
-- **VB-CABLE** for Blob's optional system-wide sound processing.
-
-After a fresh full installation, sign out and back in once for FPS permission changes. Restart
-Windows once if the VB-CABLE driver was installed. Blob itself, media controls, and the standard
-Windows metrics remain usable while optional integrations are unavailable.
-
-> Review [`install.ps1`](install.ps1) before running the one-line installer if you prefer to inspect
-> remote scripts before execution.
-
-## Update
-
-To update an existing installation to the latest GitHub `main` build, run this in PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/GAEONN/Blob/main/update.ps1 | iex
-```
-
-The updater downloads the current installer, closes only the running Blob process, preserves your
-preferences and optional components, refreshes the application files and dependencies, recreates
-the shortcut, verifies the result, and launches Blob again. To update without launching it:
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/GAEONN/Blob/main/update.ps1))) -NoLaunch
-```
-
-If you downloaded the repository as a ZIP, run `Install Blob.cmd` once, or use
-`powershell -ExecutionPolicy Bypass -File .\install.ps1`. Re-running the installer is safe and
-repairs the same installation.
-
-## What Blob includes
+### What each view does
 
 | View | Purpose |
 | --- | --- |
@@ -104,7 +176,7 @@ the small FPS/frame-time Bubble. Choose the Gaming state in Settings; Bubble ret
 last strip orientation through its inset satellite. Dashboard adds the simultaneous overview
 and a slim, downward-expanding left game dock.
 
-## Everyday controls
+### Everyday controls
 
 - Click Blob's tray icon to show or hide the interface.
 - Drag the normal card or an empty area to pin it anywhere.
@@ -117,7 +189,7 @@ and a slim, downward-expanding left game dock.
 SmallBlob keeps its existing tab behavior. The detached game dock starts locked; returning
 from Dashboard to SmallBlob's Gaming view also starts locked to protect game input.
 
-## Hardware without an OEM lock-in
+### Hardware without an OEM lock-in
 
 Blob is designed for Windows PCs rather than a particular laptop manufacturer. Standard load,
 memory, adapter, battery, and storage information comes from Windows. Additional sensor data is
@@ -142,7 +214,7 @@ The System bubble behaves like this:
 - Click the visible satellite to return to the full System card.
 - While Blob is unlocked, click-drag the bubble to reposition it.
 
-## Music that is not tied to Apple Music
+### Music that is not tied to Apple Music
 
 Blob reads the active Windows media session, so now-playing information and transport controls work
 with Spotify, YouTube, browsers, Apple Music, and other compatible players. Apple Music installation
@@ -162,7 +234,7 @@ the routed 28-band spectrum when available; otherwise it watches every active Wi
 endpoint and derives level/transient motion. Bass expands the body, mids flex the fused neck, and
 treble moves the satellite. This works without enabling Blob's Sound enhancement.
 
-## Sound
+### Sound
 
 Sound is optional. When enabled, Windows audio is routed through VB-CABLE into Blob's separate DSP
 process and then played on the selected physical output. The processing chain provides EQ, bass,
@@ -177,7 +249,7 @@ Blob's route, and restores the prior device when Blob is disabled.
 Regular and Compact Sound cards also offer a small status bubble showing boost and on/off state;
 its satellite restores the full Sound controls.
 
-## Gaming overlay
+### Gaming overlay
 
 Gaming is a narrow, no-activation overlay intended for windowed and borderless games. SmallBlob
 offers the same six-metric strip in horizontal or vertical orientation, plus a Bubble that only
@@ -193,14 +265,20 @@ rather than monitor refresh rate.
 Blob does not inject into games, alter anti-cheat, or change a game's display settings. Missing or
 stale frame data is shown as unavailable rather than replaced with an invented value.
 
-## Screenshots and recordings
+### Screenshots and recordings
 
 Blob normally excludes itself from Windows capture so it can refract the live desktop without
 feeding its previous frame back into the glass. Enable **Include Blob in screenshots and recordings**
 to make it visible to capture tools. In that mode, the backdrop freezes while Blob is visible to
 avoid recursive self-capture.
 
-## Alternative installation
+## For developers
+
+Blob is written in Python with OpenGL and native Win32 APIs — no browser window and no Electron.
+SmallBlob and the Dashboard are two views of one app: they share one window, tray icon, audio
+engine, media session, sensor monitor and settings. See [docs/V5-NOTES.md](docs/V5-NOTES.md).
+
+### Alternative installation
 
 Clone the repository and run the installer locally:
 
@@ -230,14 +308,14 @@ To start an installed checkout manually, use `Launch Blob.cmd`, the desktop shor
 .\.venv\Scripts\pythonw.exe .\app.pyw
 ```
 
-## Requirements
+### Technical requirements
 
 - Windows 11
 - A GPU and driver supporting OpenGL 3.3
 - Python 3.10–3.13; the installer can provision Python through WinGet
 - Administrator approval only for the optional drivers, sensor provider, and FPS permission setup
 
-## Development
+### Development
 
 Install the Python dependencies into a virtual environment, then launch `app.pyw`. Run the offline
 regression suite with:
@@ -268,8 +346,9 @@ Key files:
 | [`applemusic.py`](applemusic.py) | Optional Apple Music search, queue, and playback integration |
 | [`DESIGN.md`](DESIGN.md) | Visual system, shader model, interaction rules, and spring behavior |
 | [`PRODUCT.md`](PRODUCT.md) | Product behavior and feature contract |
+| [`docs/`](docs) | Release notes for v3–v5, screenshots, and the original build brief |
 
-## Current limitations
+### Current limitations
 
 - Detailed sensors are only as complete as the PC firmware and selected sensor provider allow.
 - Cross-vendor fan monitoring is practical; universal fan control is not. Safe control requires a
@@ -280,6 +359,12 @@ Key files:
 - Apple Music-specific search and queue features depend on the installed app and its UI availability;
   normal media controls do not.
 
+## Older versions
+
+Every earlier version is kept on the [Releases](https://github.com/GAEONN/Blob/releases) page and as
+[tags](https://github.com/GAEONN/Blob/tags): **v3.0.0**, **v3.1.0**, **v4.0.0**, **v5.0.0**, plus the archived
+`archive-before-yao` and `archive-v4-merged-refraction` snapshots.
+
 ## License
 
-[MIT](LICENSE)
+Free and open source under the [MIT license](LICENSE).

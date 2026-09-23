@@ -11,7 +11,7 @@ colors:
 v5 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
 shared settings/controllers and a mode-dependent shader anchor. The shared v5 profile lives
 in `%LOCALAPPDATA%\Blob-v5`, uses the `Local\BlobUnified-v5` mutex, and defaults to
-Ctrl+Alt+V (or a migrated custom binding); see ../V5-NOTES.md.
+Ctrl+Alt+V (or a migrated custom binding); see ../docs/V5-NOTES.md.
 
 ## Overview
 

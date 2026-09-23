@@ -3,7 +3,7 @@
 **v5 host:** This presentation runs inside `../unified.py` alongside SmallBlob, with one set of
 controllers and `%LOCALAPPDATA%\Blob-v5` settings. F10/tray commands switch views; the shared
 default lock shortcut is Ctrl+Alt+V. `dashboard/app.pyw` requests this view from the unified
-entry point. See ../V5-NOTES.md.
+entry point. See ../docs/V5-NOTES.md.
 
 The full-screen Windows presentation for SmallBlob. The user's pinned model is a car-display /
 CarPlay-like overview: Music, System temperatures/fans, Sound controls and Gaming data
