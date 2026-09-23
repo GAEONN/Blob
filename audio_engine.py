@@ -8,9 +8,14 @@ Parameters and the spectrum are exchanged through shared memory.
 usage: pythonw audio_engine.py "<output device name>" "<output endpoint id>" "<shared memory name>"
 """
 import math
+import os
 import sys
 import time
 from multiprocessing import shared_memory
+
+# numpy/scipy's OpenBLAS otherwise spawns a thread per CPU and reserves ~1.5 GB; our math is tiny
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 
 import numpy as np
 import sounddevice as sd

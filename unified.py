@@ -15,6 +15,7 @@ from dashboard import dashboard as dash
 base, engine, glass, user32 = dash.base, dash.engine, dash.glass, dash.user32
 ROOT = Path(__file__).resolve().parent
 APP_NAME = 'Blob v5'
+LEGACY_APP_NAMES = ('Blob', 'Blob v3', 'Blob v4')  # older builds' Run values; left behind they launch Blob twice
 MUTEX = 'Local\\BlobUnified-v5'
 SMALL, FULL, DOCK, OPEN = 0x8010, 0x8011, 0x8012, 0x8013
 
@@ -39,6 +40,13 @@ def initial_config(local_app_data):
 
 def set_startup(enable):
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base.RUN_KEY) as key:
+        for name in LEGACY_APP_NAMES:
+            try:
+                command = winreg.QueryValueEx(key, name)[0]
+            except FileNotFoundError:
+                continue
+            if '.pyw' in str(command).lower():  # only our own python launchers, never another app's value
+                winreg.DeleteValue(key, name)
         if enable:
             pythonw = Path(sys.executable).with_name('pythonw.exe')
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ,

@@ -148,8 +148,22 @@ class UnifiedTests(unittest.TestCase):
         with patch.object(Path, 'read_text', return_value='{"options": 4}'):
             self.assertFalse(u.initial_config('unused')['options']['soundstart'])
 
+    def test_startup_removes_legacy_blob_entries_only(self):
+        values = {'Blob v4': '"pythonw.exe" "C:\\Blob-v4\\app.pyw" --startup', 'Blob': 'C:\\Other\\blob.exe'}
+
+        def query(key, name):
+            if name not in values:
+                raise FileNotFoundError(name)
+            return values[name], 1
+
+        with patch.object(u.winreg, 'CreateKey'), patch.object(u.winreg, 'QueryValueEx', side_effect=query), \
+                patch.object(u.winreg, 'DeleteValue') as delete, patch.object(u.winreg, 'SetValueEx'):
+            u.set_startup(True)
+        self.assertEqual([c.args[1] for c in delete.call_args_list], ['Blob v4'])
+
     def test_startup_points_to_one_entry_and_own_registry_value(self):
-        with patch.object(u.winreg, 'CreateKey'), patch.object(u.winreg, 'SetValueEx') as write:
+        with patch.object(u.winreg, 'CreateKey'), patch.object(u.winreg, 'QueryValueEx', side_effect=FileNotFoundError), \
+                patch.object(u.winreg, 'SetValueEx') as write:
             u.set_startup(True)
             self.assertEqual(write.call_args.args[1], 'Blob v5')
         self.assertIn('app.pyw', write.call_args.args[-1])
