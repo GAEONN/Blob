@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from multiprocessing import shared_memory
+from xml.etree import ElementTree as ET
 
 import numpy as np
 import psutil
@@ -21,6 +22,7 @@ from audio_engine import (BASS, BOOST, CLARITY, ENABLED, EQ0, HEARTBEAT, LEVEL, 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CABLE_IN = "CABLE Input (VB-Audio Virtual Cable)"
 VIRTUAL = ("CABLE", "VB-Audio", "FxSound")
+FXSOUND_SETTINGS = os.path.join(os.environ.get("APPDATA", ""), "FxSound", "FxSound.settings")
 
 PRESETS = {
     #            31   62  125  250  500   1k   2k   4k   8k  16k   surround
@@ -55,6 +57,40 @@ def _dev(name):
     if d is None:
         d = _devices(refresh=True).get(name)
     return d
+
+
+def _is_cable_input_name(name):
+    """Match VB-CABLE playback endpoints across driver naming variants."""
+    low = str(name or "").casefold()
+    return "vb-audio" in low and (low.startswith("cable in") or "cable input" in low)
+
+
+def _is_cable_output_name(name):
+    """Match the paired VB-CABLE recording endpoint used by the DSP process."""
+    low = str(name or "").casefold()
+    return "vb-audio" in low and (low.startswith("cable out") or "cable output" in low)
+
+
+def cable_input_name(refresh=False):
+    """Return the installed VB-CABLE playback name instead of assuming one label."""
+    devices = _devices(refresh)
+    if CABLE_IN in devices:
+        return CABLE_IN
+    candidates = [name for name in devices if _is_cable_input_name(name)]
+    return next((name for name in candidates if name.casefold().startswith("cable in")),
+                candidates[0] if candidates else None)
+
+
+def fxsound_output_name():
+    """Read FxSound's selected physical destination when its virtual endpoint is default."""
+    try:
+        root = ET.parse(FXSOUND_SETTINGS).getroot()
+        for value in root.findall("VALUE"):
+            if value.get("name") == "output_device_name":
+                return value.get("val") or ""
+    except (OSError, ET.ParseError):
+        pass
+    return ""
 
 
 def output_devices(refresh=False):
@@ -132,6 +168,9 @@ class Sound:
         self.proc = None
         self.error = ""
         self.fx_conflict = False
+        self.cable_name = None
+        self.previous_default_name = None
+        self.previous_default_id = None
         self.volume = None         # Windows master volume (whatever device is default), 0..1
         self.spectrum = np.zeros(N_BANDS)
         self.reactive_active = False
@@ -144,6 +183,7 @@ class Sound:
         self.p[HEARTBEAT] = time.time()
         self.push()
         self.cable = None          # set by the worker: is VB-Audio Virtual Cable installed?
+        self.outputs = []          # cached physical destinations for the Sound dropdown
         self.jobs = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
         self.jobs.put(("warm", None))
@@ -187,7 +227,7 @@ class Sound:
             return
         if on and fxsound_running():
             self.fx_conflict = True
-            self.error = "FxSound is running and keeps taking the audio."
+            self.error = "FxSound is active. Use 'Use Blob audio' to switch the audio route."
             return
         self.fx_conflict = False
         self.enabled = on
@@ -196,6 +236,14 @@ class Sound:
 
     def next_output(self):
         self.jobs.put(("next_output", None))
+
+    def output_options(self):
+        """Return the cached physical destinations without blocking the UI thread."""
+        return list(self.outputs)
+
+    def select_output(self, name):
+        """Select one physical destination from the Sound dropdown."""
+        self.jobs.put(("select_output", str(name)))
 
     def set_system_volume(self, v):
         self.volume = max(0.0, min(1.0, v))
@@ -267,6 +315,8 @@ class Sound:
                     self._pick_output()
                 elif job == "next_output":
                     self._next_output()
+                elif job == "select_output":
+                    self._select_output(arg)
                 elif job == "volume":
                     while not self.jobs.empty():  # only the latest value matters while dragging
                         nxt = self.jobs.queue[0]
@@ -315,11 +365,15 @@ class Sound:
                 core.log(f"sound worker: {job}: {e!r}")
 
     def _pick_output(self):
-        self.cable = device_id(CABLE_IN) is not None
+        self.cable_name = cable_input_name(refresh=True)
+        self.cable = self.cable_name is not None
         names = [n for n, _ in output_devices(refresh=True)]
+        self.outputs = names
         if self.output not in names:
             current = default_output_name()
-            self.output = current if current in names else (names[0] if names else None)
+            preferred = fxsound_output_name() if "fxsound" in current.casefold() else ""
+            self.output = (preferred if preferred in names else
+                           current if current in names else (names[0] if names else None))
 
     def _ensure_engine(self):
         if self.proc and self.proc.poll() is None and self.p[STATUS] == 1:
@@ -362,15 +416,20 @@ class Sound:
             if not self._ensure_engine():
                 self.enabled = False
                 return
-            cable = device_id(CABLE_IN)
+            self.cable_name = self.cable_name or cable_input_name(refresh=True)
+            cable = device_id(self.cable_name) if self.cable_name else None
             if not cable:
                 self.error = "VB-Audio Virtual Cable is missing."
                 self.enabled = False
                 return
             # like FxSound: the real device runs at 100 % and your volume slider moves to the cable
+            current = default_output_name()
+            if current and not _is_cable_input_name(current):
+                self.previous_default_name = current
+                self.previous_default_id = device_id(current)
             vol = get_volume(self.output)
             if vol is not None:
-                set_volume(CABLE_IN, vol)
+                set_volume(self.cable_name, vol)
                 set_volume(self.output, 1.0)
             set_default(cable)
             self.routed = True
@@ -378,20 +437,30 @@ class Sound:
             self._unroute()
 
     def _unroute(self):
-        vol = get_volume(CABLE_IN)
+        cable_name = self.cable_name or cable_input_name()
+        vol = get_volume(cable_name) if cable_name else None
         if vol is not None and self.output:
             set_volume(self.output, vol)
-        out_id = device_id(self.output) if self.output else None
+        out_id = self.previous_default_id or (device_id(self.output) if self.output else None)
         if out_id:
             set_default(out_id)
+        self.previous_default_name = None
+        self.previous_default_id = None
         self.routed = False
 
     def _next_output(self):
         names = [n for n, _ in output_devices(refresh=True)]
+        self.outputs = names
         if not names:
             return
         new = names[(names.index(self.output) + 1) % len(names)] if self.output in names else names[0]
         self._switch_output(new)
+
+    def _select_output(self, name):
+        names = self.outputs or [n for n, _ in output_devices(refresh=True)]
+        self.outputs = names
+        if name in names and name != self.output:
+            self._switch_output(name)
 
     def _switch_output(self, new):
         was = self.routed
@@ -420,15 +489,17 @@ class Sound:
         if not self.routed:
             return
         current = default_output_name()
-        if not current or current == CABLE_IN:
+        if not current or _is_cable_input_name(current):
             return
-        if any(v in current for v in VIRTUAL):
-            if fxsound_running():
-                self.fx_conflict = True
-                self.error = "FxSound took over the audio again."
+        if "fxsound" in current.casefold():
+            self.fx_conflict = True
+            self.error = "FxSound took over the audio. Use 'Use Blob audio' to switch."
+            return
+        if any(v.casefold() in current.casefold() for v in VIRTUAL):
             return
         self.routed = False  # Windows is no longer pointing at us
-        set_volume(self.output, get_volume(CABLE_IN) or 1.0)
+        cable_name = self.cable_name or cable_input_name()
+        set_volume(self.output, get_volume(cable_name) or 1.0)
         self.output = current
         self.save()
         self._stop_engine()

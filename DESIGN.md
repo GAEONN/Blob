@@ -23,8 +23,9 @@ Python 3.13 + `moderngl`, `dxcam`, `numpy`, `scipy`, `Pillow`, `pystray`, `psuti
 ## 1. What the look is
 
 Real glass sitting on the desktop. Not a blurred bitmap: the panel **captures the live screen
-behind it and refracts it on the GPU** every frame, so video, games and moving windows bend
-through it in real time.
+behind it and refracts it on the GPU**. The background copy refreshes independently while the
+glass geometry renders at the animation cadence, so video, games and moving windows still bend
+through it in real time without repeating the expensive desktop capture on every spring step.
 
 Ingredients, all in one fragment shader (`glass.py` → `FRAG`):
 
@@ -132,9 +133,10 @@ fades and their knob swells instead.
 * **Capture with DXGI Desktop Duplication** (`dxcam`), region-limited: ~0.7 ms per changed frame
   and it reports when nothing changed. GDI `BitBlt` was 5 ms every frame — only keep it as the
   fallback path (and for the moment right after the panel moves, when duplication has no new frame).
-* **Poll, then draw.** An 8 ms timer checks whether the screen changed; a frame is only rendered
-  when the background, an animation or the content actually changed. Idle costs nothing; over
-  playing video it reaches 60+ fps at ~4 ms/frame.
+* **Poll, then draw.** A stable 16 ms timer targets 60 FPS; the screen copy refreshes at its own
+  cadence and a frame renders when the background, an animation or the content actually changed.
+  Idle costs nothing, while animated glass reuses the latest capture instead of blocking on a
+  desktop copy every frame.
 * `timeBeginPeriod(1)`, or `WM_TIMER` jitters at 15.6 ms and everything looks choppy.
 * **Never block the UI thread.** COM/audio/UI-Automation calls take 50–300 ms; run them on worker
   threads with a job queue and let the UI show optimistic state immediately.
@@ -206,16 +208,16 @@ the window to capture animation states without touching the mouse.
 
 ## Components
 
-### System card and mode bubble
+### System card and metrics bubble
 
 The first view is named **System**. Its 340 DIP card keeps CPU/GPU thermals and the first
-two fan readings above the fold, followed by a five-part mode track. One context chevron expands a
-bounded, scrollable inventory that also includes every discovered fan. One unmarked top-right circle
-morphs the view into a 104 × 98 DIP mode bubble. Width, height, content and the signed-distance
+two fan readings above the fold, followed by a five-part mode track. One visible nested control
+expands a bounded, scrollable inventory that also includes every discovered fan. One top-right circle
+morphs the view into a 104 × 98 DIP metrics bubble showing CPU and GPU temperatures. Width, height, content and the signed-distance
 silhouette spring together rather than swapping at either endpoint. The shader draws the final outline as the smooth union of a
 78 DIP cycle body and a 43 DIP restore satellite; it is not a rounded-rectangle approximation.
-Bubble clicks cycle Auto → Quiet → Balanced → Turbo. Custom is intentionally excluded because
-it requires the full card. A selected preference must be labeled monitoring-only whenever no real
+The main body retains the quick-mode action for compatibility, while the visible inset satellite
+restores the System card. A selected preference must be labeled monitoring-only whenever no real
 fan-profile backend reports an active mode.
 
 The top and right edges remain anchored throughout the morph so the card's unmarked corner lens
@@ -225,6 +227,13 @@ command toggles it. Locked applies real cross-process input transparency to ever
 restores controls and satellite dragging. Only the restore satellite is a bubble drag target
 and shows the move cursor; the main System lobe cycles modes. Settings persists the modified key chord through
 `RegisterHotKey`.
+
+### Sound status bubble
+
+Regular and Compact Sound cards share the same inset bubble affordance. The 104 × 98 DIP bubble
+shows boost level and enhancement state; its main lobe toggles enhancement and its satellite
+restores the full Sound card. The geometry, drag rule and restore animation reuse the System and
+Music bubble language.
 
 ### Music player bubble
 
@@ -275,18 +284,18 @@ not a new global type ramp.
 This addition describes the native extension in `blob.pyw`, `gaming.py` and
 `applemusic.py`; the incumbent brief and design tokens remain unchanged.
 
-**Slim-strip rule.** Gaming rests at 624 × 86 DIP (560 DIP wide in Compact), with
-six aligned groups: FPS/frame time, CPU temperature/load, GPU temperature/load,
-RAM percentage/used memory, fan RPM and GPU power/power-source hint. The left menu
-reveals the existing spring-animated switcher, adding 56 DIP of height. Dragging
-and clicking the strip preserve foreground focus. It reuses refractive glass,
-continuous corners, adaptive ink and the existing warm temperature warnings.
-
-**Satellite-only move rule.** Gaming optionally contracts to a 104 × 98 DIP bubble with
-24 DIP FPS numerals, a 10 DIP FPS label and 11 DIP frame time in ms. Its restore satellite
-returns to the strip or drags while unlocked. Across System, Music and Gaming bubbles, only
-the satellite shows a move cursor; main lobes retain their content/gestures. Settings exposes
-Strip / FPS bubble. Unavailable FPS and ms stay dashes.
+**Slim-strip rule.** SmallBlob Gaming offers the same six groups—FPS/frame time, CPU
+temperature/load, GPU temperature/load, RAM percentage/used memory, fan RPM and GPU
+power/power-source hint—in two strip orientations: 624 × 86 DIP horizontal (560 DIP wide in
+Compact) or 188 × 424 DIP vertical (172 DIP wide in Compact). Both use the same type ramp,
+labels and metric order; Vertical is a stack of the Horizontal instrument, not a second
+dashboard. Settings also exposes a 104 × 98 DIP Bubble that shows only FPS and frame time.
+The edge menu reveals the same spring-animated switcher used by the main app, adding 56 DIP
+of height and anchoring its resting pill to the left or right monitor edge. The Bubble morph
+shares the strip's top edge and keeps an inset restore satellite; it remembers whether the
+user came from Horizontal or Vertical. All three states preserve foreground focus, refractive
+glass, continuous corners, adaptive ink and warm temperature warnings. Unavailable FPS and ms
+stay dashes.
 
 **Unknown-stays-unknown rule.** Unavailable metrics use dashes or explicit sensor
 and setup hints. FPS/frame time describe application presentation intervals, not

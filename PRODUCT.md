@@ -16,16 +16,17 @@ enhancement and music controls. Hardware support varies by sensor/provider. Musi
 with any Windows media session; Apple Music queue operations are an optional extension when its
 Windows app is already installed.
 
-## System card and mode bubble
+## System card and metrics bubble
 
 - The first view is labeled System. Its card prioritizes CPU/GPU temperature and fan RPM, offers
   Auto, Quiet, Balanced, Turbo and Custom preferences, and expands in place for the full
   bounded sensor inventory.
-- A single-circle contextual corner control springs the card into a fused two-circle glass bubble.
-  Width, height, silhouette and content animate as one continuous morph. The main body
-  cycles the four quick modes and the attached satellite restores the full interface. Mode choices
-  persist, but are explicitly described as monitoring-only until a real fan-profile backend is
-  connected; Blob never pretends that a firmware or pump setting changed.
+- The contextual corner control springs the card into a fused two-circle glass bubble. The bubble
+  shows CPU and GPU temperatures—the useful glance view—while the full card retains the five
+  monitoring preferences and bounded sensor inventory. The main body keeps the legacy quick-mode
+  action; the visible inset satellite restores the System card and is the only bubble drag handle.
+  Mode choices persist, but are explicitly described as monitoring-only until a real fan-profile
+  backend is connected; Blob never pretends that a firmware or pump setting changed.
 - The top-right anchor stays fixed during the morph. Bubble placement follows Blob's shared global
   lock state. Only the satellite restores or drags the bubble and shows the move cursor when
   unlocked; the main body remains a mode-cycle target.
@@ -54,6 +55,12 @@ Windows app is already installed.
   bands or fabricated beats. Full-cover mode stays stationary. Its visualizer button toggles
   in-cover bars, using DSP bins when available and a uniform amplitude meter otherwise.
 
+## Sound status bubble
+
+- Sound exposes the same compact bubble affordance in Regular and Compact cards. It shows the
+  current boost level and on/off state, with a visible inset satellite that restores the full Sound
+  card. Its body toggles enhancement; the full card remains the place for output, presets and EQ.
+
 ## Shared overlay lock
 
 - Blob starts unlocked. Tab changes, entering Gaming, hiding and reopening do not mutate that state.
@@ -64,12 +71,16 @@ Windows app is already installed.
 
 - Gaming adds the approved slim, draggable strip: FPS and frame time, CPU/GPU
   temperatures and utilization, RAM, fan RPM and GPU power. It keeps Blob's existing
-  glass surface and provides navigation through its left menu without activating
+  glass surface and provides navigation through its edge menu without activating
   the strip over the foreground application. Windowed/borderless use is intended;
   visibility over exclusive fullscreen is not guaranteed.
-- The optional 104 × 98 DIP FPS bubble shows only FPS and frame time in ms. Its satellite
-  restores the strip or drags while unlocked, and is its only move-cursor target.
-  Settings → Overlay → Gaming view also selects Strip / FPS bubble.
+- SmallBlob's Gaming view offers the same six FPS, frame-time and system metrics in a
+  horizontal strip, a vertically stacked strip, or a compact FPS/frame-time Bubble. The
+  strip menu reuses the main app's morphing tab dropdown and follows the side of the monitor
+  where the strip is parked.
+  Settings → Overlay → Gaming view selects Horizontal, Vertical, or Bubble. Bubble remembers
+  the last strip orientation, and its inset satellite restores that strip with the same spring
+  morph instead of adding another minimizer button to the strip.
 - FPS/frame time require the optional PresentMon console helper. `gaming.py`
   derives them from application presentation intervals for the external foreground
   process, selecting one swapchain rather than combining them. Missing/stale frame

@@ -140,9 +140,16 @@ class Engine:
 
 
 def find_device(name, kind):
+    requested = str(name or "").casefold()
+    cable_output = "cable output" in requested or requested.startswith("cable out")
     for i, d in enumerate(sd.query_devices()):
-        if sd.query_hostapis(d["hostapi"])["name"].startswith("Windows WASAPI") and d["name"] == name \
-                and d[f"max_{kind}_channels"] >= 2:
+        candidate = str(d["name"] or "")
+        low = candidate.casefold()
+        same_name = candidate == name
+        same_cable = (cable_output and "vb-audio" in low and
+                      (low.startswith("cable out") or "cable output" in low))
+        if sd.query_hostapis(d["hostapi"])["name"].startswith("Windows WASAPI") and \
+                (same_name or same_cable) and d[f"max_{kind}_channels"] >= 2:
             return i
     raise RuntimeError(f"device not found: {name}")
 
@@ -154,7 +161,8 @@ def restore_default(endpoint_id):
         from pycaw.constants import ERole
         vol = None
         for d in AudioUtilities.GetAllDevices(data_flow=0, device_state=1):
-            if d.FriendlyName == "CABLE Input (VB-Audio Virtual Cable)":
+            name = str(d.FriendlyName or "").casefold()
+            if "vb-audio" in name and (name.startswith("cable in") or "cable input" in name):
                 vol = d.EndpointVolume.GetMasterVolumeLevelScalar()
         for d in AudioUtilities.GetAllDevices(data_flow=0, device_state=1):
             if d.id == endpoint_id and vol is not None:

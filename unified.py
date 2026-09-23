@@ -14,8 +14,8 @@ from dashboard import dashboard as dash
 
 base, engine, glass, user32 = dash.base, dash.engine, dash.glass, dash.user32
 ROOT = Path(__file__).resolve().parent
-APP_NAME = 'Blob v4'
-MUTEX = 'Local\\BlobUnified-v4'
+APP_NAME = 'Blob v4 (Merged)'
+MUTEX = 'Local\\BlobUnified-v4-merged-refraction'
 SMALL, FULL, DOCK, OPEN = 0x8010, 0x8011, 0x8012, 0x8013
 
 
@@ -48,7 +48,7 @@ def set_startup(enable):
 
 
 def configure_runtime():
-    engine.DATA_DIR = os.path.join(os.environ['LOCALAPPDATA'], 'Blob-v4')
+    engine.DATA_DIR = os.path.join(os.environ['LOCALAPPDATA'], 'Blob-v4-merged-refraction')
     engine.CONFIG_PATH = os.path.join(engine.DATA_DIR, 'config.json')
     engine.LOG_PATH = os.path.join(engine.DATA_DIR, 'blob.log')
     os.makedirs(engine.DATA_DIR, exist_ok=True)
@@ -86,6 +86,7 @@ class UnifiedRenderer(dash.BaseRenderer):
     def set_view(self, full):
         self.full = full
         self.prog['full_view'].value = float(full)
+        self.set_panel_side('right' if full else getattr(self, 'panel_side', 'right'))
         self.set_ambient((0, 0, 0, 0))
         self.set_pointer(None, 0, -1, 0)
         self.set_panel_shape(0)
@@ -132,6 +133,7 @@ class UnifiedApp(dash.DashboardApp):
     bubble_drag_key = view_method('bubble_drag_key')
     toggle_overlay_input = view_method('toggle_overlay_input')
     set_music_view = view_method('set_music_view')
+    set_sound_view = view_method('set_sound_view')
     refresh_backdrop = view_method('refresh_backdrop')
     click = view_method('click')
 
@@ -207,6 +209,8 @@ class UnifiedApp(dash.DashboardApp):
         self.panel.hotkey_label = base.DUAL_CONTROL_LABEL
         self.full = view == 'dashboard'
         self.glass.set_view(self.full)
+        if not self.full:
+            self.glass.set_panel_side(getattr(self, 'panel_side', 'right'))
         self.pos = self.positions.get(view)
         self._overlay_unlocked = lock_state
         self.gaming_modifier_drag = False
@@ -223,6 +227,8 @@ class UnifiedApp(dash.DashboardApp):
         self.glass.resize_surface(width, height)
         self.hardware_top = self.glass.panel_y(round((210+dash.BasePanel.TOP)*self.S))
         self.music_top = self.glass.panel_y(round((dash.BasePanel.TOP+118)*self.S))
+        sound_card_h = dash.BasePanel.TOP + (150 if self.panel.compact else 462)
+        self.sound_top = self.glass.panel_y(round(sound_card_h * self.S))
         self.controls, self.old_controls = [], []
         self.springs = base.Springs()
         self.drag = self.drag_click = self.drag_origin = self.slider_drag = self.pressed = None
@@ -276,11 +282,16 @@ def main():
     except OSError:
         pass
     base.k32.CreateMutexW.restype = base.wintypes.HANDLE
+    base.k32.CreateMutexW.argtypes = [base.wintypes.LPVOID, base.wintypes.BOOL, base.wintypes.LPCWSTR]
     base.k32.CloseHandle.argtypes = [base.wintypes.HANDLE]
+    # CreateMutex only guarantees ERROR_ALREADY_EXISTS when the named mutex
+    # was already present. Clear the thread error first so a stale Win32 error
+    # from DPI/device setup cannot make a fresh launch exit immediately.
+    ctypes.set_last_error(0)
     mutex = base.k32.CreateMutexW(None, False, MUTEX)
     if not mutex:
         raise ctypes.WinError()
-    if base.k32.GetLastError() == 183:
+    if ctypes.get_last_error() == 183:
         user32.FindWindowW.restype = base.wintypes.HWND
         user32.FindWindowW.argtypes = [base.wintypes.LPCWSTR, base.wintypes.LPCWSTR]
         hwnd = user32.FindWindowW('BlobGlass', APP_NAME)

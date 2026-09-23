@@ -1,10 +1,11 @@
 """Liquid-glass renderer for a Win32 layered window.
 
-Every frame: grab the pixels behind the panel (the window is excluded from capture, so we
-never see ourselves), upload them to the GPU, where one fragment shader evaluates every glass
-shape analytically and does the refraction, dispersion, frosted blur, lighting and per-pixel
-adaptive text colour; the result is read back and pushed with UpdateLayeredWindow (per-pixel
-alpha). The CPU only moves bytes, so shapes can animate every frame.
+The renderer keeps a current copy of the pixels behind the panel (the window is excluded from
+capture, so we never see ourselves), refreshes that copy independently, and uploads it to the
+GPU when it changes. One fragment shader evaluates every glass shape analytically and does the
+refraction, dispersion, frosted blur, lighting and per-pixel adaptive text colour; the result
+is read back and pushed with UpdateLayeredWindow (per-pixel alpha). Shapes can animate every
+frame without recapturing the desktop each time.
 
 Shapes are true squircles: the figma-squircle construction (corner radius + corner smoothing,
 60 % = Apple's iOS value) — Bézier ramps into a shortened circular arc, so curvature is
@@ -184,6 +185,7 @@ uniform sampler2D bg;                 // screen behind the panel (BGRA bytes), m
 uniform sampler2D ink0, ink1;         // text coverage: previous / current content
 uniform sampler2D acc0, acc1;         // accent colours (premultiplied): previous / current
 uniform sampler2D pic0, pic1;         // images (album art), premultiplied, drawn as-is
+uniform sampler2D backdrop0, backdrop1; // moving blurred album backdrop, premultiplied
 uniform vec4 ambient;                 // page tint at the top (e.g. the album's colour), alpha = strength
 uniform vec3 ambient2;                // page tint at the bottom
 uniform vec2 ink0_size, ink1_size;   // in texels (content is rendered supersampled)
@@ -194,6 +196,17 @@ uniform vec2 panel_pos, panel_size;   // panel rect in window px
 uniform float panel_r;
 uniform float panel_morph;            // 0 card, 1 contextual bubble; continuous during transition
 uniform vec3 bubble_audio;             // smoothed bass, mid and treble energy, each 0..1
+uniform float bubble_side;             // +1 right edge, -1 left edge
+uniform float bubble_time;             // monotonic seconds for the audio wave
+uniform vec4 backdrop_motion;          // scale, x drift, y drift, rotation
+uniform float backdrop_time;
+uniform float backdrop_alpha;
+uniform vec4 backdrop_color0;
+uniform vec4 backdrop_color1;
+uniform vec4 backdrop_color2;
+uniform vec4 backdrop_color3;
+uniform vec4 backdrop_color4;
+uniform vec4 backdrop_color5;
 uniform vec2 light;
 uniform float S, glassiness;
 uniform int n_lens;
@@ -238,17 +251,24 @@ float sdPanel(vec2 p) {
     // the card is contracting instead of appearing only after the resize.
     float u = min(panel_size.x / 104.0, panel_size.y / 98.0);
     float bass = bubble_audio.x, mid = bubble_audio.y, treble = bubble_audio.z;
-    vec2 main_c = panel_size * vec2(43.0 / 104.0, 55.0 / 98.0) +
+    float main_x = bubble_side < 0.0 ? 61.0 : 43.0;
+    float nub_x = bubble_side < 0.0 ? 24.5 : 79.5;
+    vec2 main_c = panel_size * vec2(main_x / 104.0, 55.0 / 98.0) +
                   vec2(0.0, -4.0 * bass * u);
-    vec2 nub_c = panel_size * vec2(79.5 / 104.0, 22.5 / 98.0) +
-                 vec2((-2.2 * mid - 1.8 * treble) * u, (1.5 * mid + 1.8 * treble) * u);
+    vec2 nub_c = panel_size * vec2(nub_x / 104.0, 22.5 / 98.0) +
+                 vec2(bubble_side * (-2.2 * mid - 1.8 * treble) * u,
+                      (1.5 * mid + 1.8 * treble) * u);
     // Bass makes the body inhale vertically; mids pull the lobes together and
     // thicken their liquid neck; treble gives the satellite a quick response.
     vec2 main_q = p - main_c;
     main_q /= vec2(1.0 + .030 * mid, 1.0 + .100 * bass);
     vec2 nub_q = p - nub_c;
     nub_q /= vec2(1.0 + .035 * treble, 1.0 + .055 * treble);
-    float a = length(main_q) - (39.0 + 2.0 * bass + 1.0 * mid) * u;
+    float energy = clamp(.75 * bass + .45 * mid + .25 * treble, 0.0, 1.0);
+    float angle = atan(main_q.y, main_q.x);
+    float wave = (0.90 * sin(angle * 4.0 - bubble_time * 5.0) +
+                  0.42 * sin(angle * 7.0 + bubble_time * 3.1)) * energy * u;
+    float a = length(main_q) - (39.0 + 2.0 * bass + 1.0 * mid) * u - wave;
     float b = length(nub_q) - (21.5 + 1.4 * treble) * u;
     float k = (9.0 + 5.0 * mid + 1.0 * bass) * u;
     float h = max(k - abs(a - b), 0.0) / max(k, 1e-3);
@@ -333,13 +353,63 @@ vec4 accAt(sampler2D t, vec2 size, vec2 pp) {
     vec4 c = texture(t, uv);
     return vec4(c.rgb * c.a, c.a);      // straight alpha in, premultiplied out
 }
+vec4 backdropAt(sampler2D t, vec2 size, vec2 pp) {
+    vec2 uv = contentUV(size, pp);
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec4(0.0);
+    vec2 q = uv - vec2(0.5);
+    float c = cos(backdrop_motion.w), s = sin(backdrop_motion.w);
+    q = mat2(c, -s, s, c) * q * max(backdrop_motion.x, 1.0);
+    // A restrained wave keeps the cover alive without looking like liquid water.
+    q.x += 0.010 * sin((uv.y + 0.15) * 6.283 + backdrop_time * 0.22);
+    q.y += 0.008 * cos((uv.x - 0.10) * 5.400 - backdrop_time * 0.18);
+    uv = q + vec2(0.5) + backdrop_motion.yz;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec4(0.0);
+    vec4 c0 = texture(t, uv);
+    return vec4(c0.rgb * c0.a, c0.a);    // straight alpha in, premultiplied out
+}
+
+vec4 backdropField(vec2 size, vec2 pp) {
+    vec2 uv = contentUV(size, pp);
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec4(0.0);
+    float t = backdrop_time;
+    float c = cos(backdrop_motion.w), s = sin(backdrop_motion.w);
+    vec2 q = mat2(c, -s, s, c) * (uv - vec2(0.5)) * max(backdrop_motion.x, 1.0);
+    q += vec2(0.5) + backdrop_motion.yz;
+    // Low-frequency warp makes the colour masses travel continuously instead
+    // of looking like a static gradient or a moving copy of the cover.
+    q += 0.045 * vec2(sin(q.y * 5.4 + t * 0.19),
+                      cos(q.x * 4.7 - t * 0.16));
+
+    vec2 p0 = vec2(0.18 + 0.11 * sin(t * 0.17), 0.23 + 0.10 * cos(t * 0.13));
+    vec2 p1 = vec2(0.78 + 0.12 * cos(t * 0.11), 0.22 + 0.11 * sin(t * 0.16));
+    vec2 p2 = vec2(0.24 + 0.12 * cos(t * 0.14), 0.78 + 0.10 * sin(t * 0.12));
+    vec2 p3 = vec2(0.77 + 0.10 * sin(t * 0.15), 0.75 + 0.12 * cos(t * 0.10));
+    vec2 p4 = vec2(0.50 + 0.15 * sin(t * 0.09), 0.46 + 0.14 * cos(t * 0.12));
+    vec2 p5 = vec2(0.48 + 0.18 * cos(t * 0.13), 0.30 + 0.16 * sin(t * 0.08));
+    float w0 = 0.22 + 1.28 * exp(-dot(q - p0, q - p0) / 0.19);
+    float w1 = 0.22 + 1.20 * exp(-dot(q - p1, q - p1) / 0.20);
+    float w2 = 0.22 + 1.18 * exp(-dot(q - p2, q - p2) / 0.21);
+    float w3 = 0.22 + 1.14 * exp(-dot(q - p3, q - p3) / 0.20);
+    float w4 = 0.26 + 1.10 * exp(-dot(q - p4, q - p4) / 0.24);
+    float w5 = 0.26 + 1.04 * exp(-dot(q - p5, q - p5) / 0.23);
+    float total = w0 + w1 + w2 + w3 + w4 + w5;
+    vec3 field = (backdrop_color0.rgb * w0 + backdrop_color1.rgb * w1
+                + backdrop_color2.rgb * w2 + backdrop_color3.rgb * w3
+                + backdrop_color4.rgb * w4 + backdrop_color5.rgb * w5) / total;
+    // Keep it rich but behind the foreground type and controls.
+    field = mix(vec3(luma(field) * 0.48), field, 0.90);
+    return vec4(clamp(field * 0.92 + 0.015, 0.0, 1.0), 1.0);
+}
 
 void main() {
     vec2 w = gl_FragCoord.xy;
     vec2 pp = w - panel_pos;                         // panel-local px
     vec2 pc = panel_size * 0.5;
     float sdP = sdPanel(pp);
-    float mask = clamp(0.5 - sdP / 1.3, 0.0, 1.0);
+    // Analytic coverage keeps frosted edges smooth at native DPI instead of
+    // producing square, one-pixel chunks when the backdrop is bright.
+    float panel_aa = max(0.75, fwidth(sdP));
+    float mask = 1.0 - smoothstep(-panel_aa, panel_aa, sdP);
     float sdS = sdPanel(pp - vec2(0.0, 8.0 * S));
     float shadow = 0.30 * (1.0 - smoothstep(-12.0 * S, 20.0 * S, sdS));
     if (mask <= 0.0) { frag = vec4(0.0, 0.0, 0.0, shadow); return; }
@@ -352,11 +422,13 @@ void main() {
 
     vec2 nP = nPanel(pp);
     float depth = max(-sdP, 0.0);
+    // Use the older, smoother panel deformation while retaining the newer
+    // border shading and optical highlight.
     float t = clamp(1.0 - depth / (28.0 * S), 0.0, 1.0) * clamp(0.5 - sdP, 0.0, 1.0);
     d += nP * (32.0 * S) * pow(t, 2.2);
     d += (pp - pc) * (0.975 - 1.0) * mask;
-    float r0 = exp(-depth / S) * clamp(0.9 - sdP, 0.0, 1.0);
-    rim += r0; face += r0 * dot(nP, light); glow += pow(t, 3.0) * 0.10;
+    float r0 = exp(-depth / (2.80 * S)) * clamp(0.9 - sdP, 0.0, 1.0);
+    rim += r0 * 1.08; face += r0 * dot(nP, light); glow += pow(t, 3.0) * 0.11;
 
     for (int i = 0; i < n_lens; i++) {
         vec4 R = L_rect[i];
@@ -365,16 +437,17 @@ void main() {
         vec4 A = L_a[i], B = L_b[i], C = L_c[i], D = L_d[i];
         vec2 c = (R.xy + R.zw) * 0.5;
         float sd = lensSd(i, pp);
-        float cov = clamp(0.5 - sd, 0.0, 1.0);
+        float lens_aa = max(0.75, fwidth(sd));
+        float cov = 1.0 - smoothstep(-lens_aa, lens_aa, sd);
         if (cov <= 0.0 && sd > 0.8) continue;
         vec2 g = vec2(lensSd(i, pp + vec2(0.5, 0.0)) - lensSd(i, pp - vec2(0.5, 0.0)),
                       lensSd(i, pp + vec2(0.0, 0.5)) - lensSd(i, pp - vec2(0.0, 0.5)));
         vec2 n = g / max(length(g), 1e-5);
         float dep = max(-sd, 0.0);
         float tt = clamp(1.0 - dep / max(A.z, 1.0), 0.0, 1.0) * clamp(0.5 - sd, 0.0, 1.0);
-        d += n * A.y * pow(tt, 2.2);
+        d += n * A.y * 1.10 * pow(tt, 2.1);
         d += (pp - c) * (A.w - 1.0) * cov;
-        float rr = exp(-dep / S) * clamp(0.9 - sd, 0.0, 1.0) * B.x;
+        float rr = exp(-dep / (1.45 * S)) * clamp(0.9 - sd, 0.0, 1.0) * B.x * 1.06;
         rim += rr; face += rr * dot(n, light); glow += pow(tt, 3.0) * 0.10 * B.x;
         frost = max(frost, cov * B.y);
         lift = max(lift, cov * B.z);
@@ -433,18 +506,33 @@ void main() {
 
     // ── sample the scene through the glass ──
     vec2 p = w + cap_origin;
-    vec3 clear = vec3(at(p + d * 0.88, 0.5).r, at(p + d, 0.5).g, at(p + d * 1.12, 0.5).b);
-    float frost_amt = max(frost, glassiness * 0.9);
+    // Split the colour samples only where a glass edge is present. The clear
+    // centre gets one aligned sample per channel, while raised borders carry
+    // the restrained chromatic fringe.
+    float edge_chroma = smoothstep(0.08, 0.72, clamp(rim, 0.0, 1.0));
+    float chroma = 0.17 * edge_chroma;
+    vec3 clear = vec3(at(p + d * (1.0 - chroma), 0.5).r,
+                      at(p + d, 0.5).g,
+                      at(p + d * (1.0 + chroma), 0.5).b);
+    // Keep frost readable without turning white scenery into a clipped block.
+    // Low glassiness is genuinely clear: do not force a full-panel blur just
+    // because the glass control is slightly above zero.
+    float global_frost = smoothstep(0.16, 0.88, glassiness) * 0.72;
+    float frost_amt = min(max(frost, global_frost), 0.82);
     vec3 col = clear;
     if (frost_amt > 0.001) {
-        float rad = mix(7.0, 3.0 + 10.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S;
-        float lod = 1.5 + 1.5 * glassiness;
+        float rad = mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S;
+        float lod = 0.85 + 1.10 * glassiness;
         vec3 acc = vec3(0.0);
-        for (int k = 0; k < 12; k++) acc += at(p + d + TAPS[k] * rad, lod);
-        col = mix(clear, acc / 12.0, frost_amt);
+        int tap_count = frost_amt > 0.42 ? 12 : 6;
+        for (int k = 0; k < 12; k++) {
+            if (k >= tap_count) break;
+            acc += at(p + d + TAPS[k] * rad, lod);
+        }
+        col = mix(clear, acc / float(tap_count), frost_amt);
     }
     float l = luma(col);
-    col = mix(vec3(l), col, 1.15);
+    col = mix(vec3(l), col, 1.06);
 
     // text colour follows the scenery behind each spot; the glass leans away from the ink
     float local = luma(at(p, 4.5));
@@ -455,19 +543,22 @@ void main() {
     col = mix(col, mix(ambient.rgb, ambient2, clamp(pp.y / panel_size.y, 0.0, 1.0)), ambient.a);
 
     // frosted controls: milky on dark scenery; on bright scenery tracks sink, raised parts glow
-    vec3 tint_dark_scene = vec3(1.0);
-    vec3 tint_bright_scene = mix(vec3(0.0), vec3(1.0), raised);
+    vec3 tint_dark_scene = vec3(0.93);
+    vec3 tint_bright_scene = mix(vec3(0.08), vec3(0.78), raised);
     float amt = mix(lift, mix(lift * 1.2, 0.55 + lift, raised), dark);
-    col = mix(col, mix(tint_dark_scene, tint_bright_scene, dark), clamp(amt, 0.0, 1.0));
+    col = mix(col, mix(tint_dark_scene, tint_bright_scene, dark), clamp(amt * 0.72, 0.0, 0.72));
     col = mix(col, tint * mix(1.0, 0.85, dark), clamp(tint_a, 0.0, 1.0));
 
+    vec4 backdrop = mix(backdropField(ink0_size, pp),
+                        backdropField(ink1_size, pp), fade);
+    col = mix(col, backdrop.rgb, backdrop_alpha);
     vec4 pic = mix(accAt(pic0, ink0_size, pp), accAt(pic1, ink1_size, pp), fade);
     col = col * (1.0 - pic.a) + pic.rgb;
 
-    float spec = rim * 0.10 + 0.60 * max(face, 0.0) + 0.26 * max(-face, 0.0);
-    spec += glow * clamp(-dot(d, light) / (20.0 * S), 0.0, 1.0);
-    col += spec + 0.03;
-    col -= rim * 0.22 * dark;
+    float spec = rim * 0.075 + 0.36 * max(face, 0.0) + 0.14 * max(-face, 0.0);
+    spec += glow * 0.55 * clamp(-dot(d, light) / (20.0 * S), 0.0, 1.0);
+    col += min(spec, 0.22) + 0.015;
+    col -= rim * 0.13 * dark;
 
     // Album artwork is opaque: text must contrast with the cover, not the desktop.
     float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);
@@ -516,6 +607,8 @@ class ScreenSource:
     def grab(self, x, y, w, h, out, moved):
         """Fill out[:h, :w] with the screen rect at (x, y) if anything changed. Returns True when the
         pixels are new. Only the panel's own rectangle is copied out of the GPU frame."""
+        x, y = int(round(x)), int(round(y))
+        w, h = max(1, int(round(w))), max(1, int(round(h)))
         if self.frozen:
             return False
         cx, cy = x + w // 2, y + h // 2
@@ -534,10 +627,15 @@ class ScreenSource:
         f = None
         if sx1 > sx0 and sy1 > sy0:
             try:
-                f = cam.grab(region=(sx0 - l, sy0 - t, sx1 - l, sy1 - t))
+                # Read the newest ready DXGI frame without waiting for the
+                # next present. Waiting here makes the glass visibly trail a
+                # scrolling or moving window by roughly one display frame.
+                f = cam.grab(region=(sx0 - l, sy0 - t, sx1 - l, sy1 - t),
+                            copy=False, new_frame_only=False)
             except Exception:
                 f = None
-        if f is not None:
+        fresh = bool(getattr(getattr(cam, "_duplicator", None), "updated", True))
+        if f is not None and (fresh or moved):
             out[sy0 - y:sy1 - y, sx0 - x:sx1 - x] = f
             return True
         if moved:  # the desktop didn't change but we moved: grab the new spot directly
@@ -551,6 +649,8 @@ _gdi_dib = None
 
 def gdi_grab(screen_dc, x, y, w, h, out):
     global _gdi_dib
+    x, y = int(round(x)), int(round(y))
+    w, h = max(1, int(round(w))), max(1, int(round(h)))
     d = _gdi_dib
     if d is None or d.w < w or d.h < h:
         replacement = Dib(max(w, d.w if d else 0), max(h, d.h if d else 0))
@@ -569,7 +669,7 @@ class GlassRenderer:
         import moderngl
         self.S = scale
         self.sp = int(28 * scale)        # shadow room around the panel
-        self.M = int(44 * scale)         # extra background grabbed so edges can refract "outside"
+        self.M = int(52 * scale)         # extra background grabbed so the thicker edge can refract outside
         self.w, self.hmax = width, max_height
         self.W, self.H = width + 2 * self.sp, max_height + 2 * self.sp
         self.screen_dc = user32.GetDC(None)
@@ -577,6 +677,7 @@ class GlassRenderer:
         self.cap = np.zeros((max_height + 2 * self.M, width + 2 * self.M, 4), np.uint8)
         self.source = ScreenSource()
         self.dump_path = None
+        self.panel_side = "right"
         self._last_key = None
         self.stats = {}
         self.ctx = moderngl.create_standalone_context()
@@ -591,7 +692,21 @@ class GlassRenderer:
         self.inks = [None, None]
         self.accs = [None, None]
         self.pics = [None, None]
-        units = {"bg": 0, "ink0": 1, "ink1": 2, "acc0": 3, "acc1": 4, "pic0": 5, "pic1": 6}
+        self.backdrops = [None, None]
+        # DXGI capture can follow a scrolling desktop at the display cadence;
+        # keep the slower fallback conservative so it does not steal CPU.
+        self.capture_min_interval = (1.0 / 60.0
+                                     if getattr(self.source, "outputs", ()) else 1.0 / 30.0)
+        self._last_capture = 0.0
+        self._bg_dirty = True
+        self._bg_uploaded = (0, 0)
+        self._dib_rect = None
+        # Framebuffer readback is tightly packed to the requested viewport;
+        # keep a 1-D staging buffer so rows never inherit the DIB's wider
+        # stride when the panel is narrower than the fixed window.
+        self._readback = np.empty(self.W * self.H * 4, dtype=np.uint8)
+        units = {"bg": 0, "ink0": 1, "ink1": 2, "acc0": 3, "acc1": 4,
+                 "pic0": 5, "pic1": 6}
         for name, unit in units.items():
             self.prog[name].value = unit
         self.prog["bg_size"].value = (self.cap.shape[1], self.cap.shape[0])
@@ -599,6 +714,13 @@ class GlassRenderer:
         self.prog["panel_r"].value = float(34 * scale)
         self.prog["panel_morph"].value = 0.0
         self.prog["bubble_audio"].value = (0.0, 0.0, 0.0)
+        self.prog["bubble_side"].value = 1.0
+        self.prog["bubble_time"].value = 0.0
+        self.prog["backdrop_motion"].value = (1.0, 0.0, 0.0, 0.0)
+        self.prog["backdrop_time"].value = 0.0
+        self.prog["backdrop_alpha"].value = 0.0
+        self._backdrop_palette = None
+        self.set_backdrop_palette(None)
         self.prog["viz_alpha"].value = 0.0
         self.prog["n_lens"].value = 0
         self.prog["ambient"].value = (0.0, 0.0, 0.0, 0.0)
@@ -614,29 +736,31 @@ class GlassRenderer:
         return self.H - self.sp - h
 
     def panel_x(self, w):
+        if getattr(self, "panel_side", "right") == "left":
+            return self.sp
         return self.W - self.sp - int(round(w))   # right-aligned, so a narrower panel stays in the corner
 
-    def _textures(self, ink, accent, pic):
+    def _textures(self, ink, accent, pic, backdrop=None):
         """Layers go up as plain bytes — no float maths, no premultiply on the CPU."""
         ink = np.ascontiguousarray(np.asarray(ink, np.uint8))
         h, w = ink.shape
         out = [ink]
-        for layer in (accent, pic):
+        for layer in (accent, pic, backdrop):
             a = np.zeros((h, w, 4), np.uint8) if layer is None else np.ascontiguousarray(
                 np.asarray(layer, np.uint8))
             out.append(a)
         return out
 
-    def set_content(self, ink, accent, pic=None, instant=False):
+    def set_content(self, ink, accent, pic=None, backdrop=None, instant=False):
         """New content (text, accents, images). The previous one is kept for crossfading."""
-        ink, acc, pic = self._textures(ink, accent, pic)
+        ink, acc, pic, backdrop = self._textures(ink, accent, pic, backdrop)
         h, w = ink.shape
         new = []
-        for data, comps in ((ink, 1), (acc, 4), (pic, 4)):
+        for data, comps in ((ink, 1), (acc, 4), (pic, 4), (backdrop, 4)):
             t = self.ctx.texture((w, h), comps, data.tobytes(), alignment=1)
             t.filter = (self.ctx.LINEAR, self.ctx.LINEAR)
             new.append(t)
-        layers = [self.inks, self.accs, self.pics]
+        layers = [self.inks, self.accs, self.pics, self.backdrops]
         for lst, t in zip(layers, new):
             if instant:
                 for old in {id(x): x for x in lst if x is not None}.values():
@@ -648,19 +772,27 @@ class GlassRenderer:
                 lst[0], lst[1] = lst[1], t
         self._last_key = None
 
-    def replace_content(self, ink, accent, pic=None):
+    def replace_content(self, ink, accent, pic=None, backdrop=None):
         """Refresh the current content in place (live numbers) without a crossfade."""
-        ink_a, acc_a, pic_a = self._textures(ink, accent, pic)
+        ink_a, acc_a, pic_a, backdrop_a = self._textures(ink, accent, pic, backdrop)
         h, w = ink_a.shape[:2]
         if self.inks[1] is None or self.inks[1].size != (w, h):
-            return self.set_content(ink, accent, pic, instant=True)
+            return self.set_content(ink, accent, pic, backdrop, instant=True)
         self.inks[1].write(ink_a.tobytes())
         self.accs[1].write(acc_a.tobytes())
         self.pics[1].write(pic_a.tobytes())
+        self.backdrops[1].write(backdrop_a.tobytes())
         self._last_key = None
 
     def set_panel_shape(self, morph):
         self.prog["panel_morph"].value = float(max(0.0, min(1.0, morph)))
+
+    def set_panel_side(self, side):
+        self.panel_side = "left" if side == "left" else "right"
+        self.prog["bubble_side"].value = -1.0 if self.panel_side == "left" else 1.0
+
+    def set_bubble_time(self, seconds):
+        self.prog["bubble_time"].value = float(seconds)
 
     def set_bubble_pulse(self, pulse):
         value = float(max(0.0, min(1.0, pulse)))
@@ -669,6 +801,28 @@ class GlassRenderer:
     def set_bubble_audio(self, bass, mid, treble):
         clamp = lambda value: float(max(0.0, min(1.0, value)))
         self.prog["bubble_audio"].value = (clamp(bass), clamp(mid), clamp(treble))
+
+    def set_backdrop_palette(self, palette):
+        """Upload six album-derived colours only when the cover changes."""
+        fallback = (
+            (0.12, 0.15, 0.20, 1.0), (0.18, 0.16, 0.22, 1.0),
+            (0.12, 0.20, 0.24, 1.0), (0.22, 0.18, 0.14, 1.0),
+            (0.16, 0.20, 0.28, 1.0), (0.20, 0.14, 0.20, 1.0),
+        )
+        colors = tuple(tuple(float(v) for v in color[:4]) for color in (palette or fallback))
+        colors = (colors + fallback)[:6]
+        if colors == self._backdrop_palette:
+            return
+        self._backdrop_palette = colors
+        for index, color in enumerate(colors):
+            self.prog[f"backdrop_color{index}"].value = color
+
+    def set_backdrop_motion(self, scale=1.0, drift_x=0.0, drift_y=0.0,
+                            rotation=0.0, seconds=0.0, alpha=0.0):
+        self.prog["backdrop_motion"].value = (float(max(1.0, scale)), float(drift_x),
+                                               float(drift_y), float(rotation))
+        self.prog["backdrop_time"].value = float(seconds)
+        self.prog["backdrop_alpha"].value = float(max(0.0, min(1.0, alpha)))
 
     def set_supersample(self, ss):
         self.prog["ink_ss"].value = float(ss)
@@ -711,6 +865,11 @@ class GlassRenderer:
 
     def capture(self, win_x, win_y, panel_w, panel_h, force=False, panel_y=None):
         """Refresh the background copy. Returns True if a new frame should be drawn."""
+        # Dragging and side-preserving springs can leave the host position as a
+        # float. Desktop capture APIs are integer-pixel APIs; normalize once at
+        # the renderer boundary so GDI, DXGI regions and layered-window updates
+        # all receive the same stable coordinates.
+        win_x, win_y = int(round(win_x)), int(round(win_y))
         sp, M = self.sp, self.M
         h = int(round(panel_h))
         py = self.panel_y(h) if panel_y is None else int(round(panel_y))
@@ -719,21 +878,45 @@ class GlassRenderer:
         tb = time.perf_counter()
         key = (win_x, win_y, h, int(round(panel_w)))
         moved = key != self._last_key
+        now = time.perf_counter()
+        if (not force and not moved and self.capture_min_interval > 0 and
+                now - self._last_capture < self.capture_min_interval):
+            self.stats["capture"] = now - tb
+            return False
+        self._last_capture = now
         changed = self.source.grab(win_x + sp - M, win_y + py - M, cw, ch, self.cap, moved)
         self._last_key = key
+        self._bg_dirty = moved or changed
         self.stats["capture"] = time.perf_counter() - tb
         return force or moved or changed
 
     def render(self, hwnd, win_x, win_y, panel_w, panel_h, fade, light, glassiness, panel_y=None):
+        win_x, win_y = int(round(win_x)), int(round(win_y))
         S, sp, M = self.S, self.sp, self.M
         h, pw = int(round(panel_h)), int(round(panel_w))
         py = self.panel_y(h) if panel_y is None else int(round(panel_y))
         px = self.panel_x(pw)
+        x0, y0 = max(0, px - sp), max(0, py - sp)
+        x1, y1 = min(self.W, px + pw + sp), min(self.H, py + h + sp)
+        dib_rect = (x0, y0, x1, y1)
+        if dib_rect != self._dib_rect:
+            # The layered window keeps a persistent DIB. Clear the previous
+            # visible region before drawing the next one so a shrinking or
+            # moving panel cannot leave a stale shadow behind.
+            if self._dib_rect is None:
+                self.dib.arr[:] = 0
+            else:
+                ox0, oy0, ox1, oy1 = self._dib_rect
+                self.dib.arr[oy0:oy1, ox0:ox1] = 0
+            self._dib_rect = dib_rect
         cap = self.cap
         ch, cw = h + 2 * M, cap.shape[1]
         t0 = time.perf_counter()
-        self.bg.write(cap[:ch], viewport=(0, 0, cw, ch))
-        self.bg.build_mipmaps()
+        if self._bg_dirty or self._bg_uploaded != (cw, ch):
+            self.bg.write(cap[:ch], viewport=(0, 0, cw, ch))
+            self.bg.build_mipmaps()
+            self._bg_dirty = False
+            self._bg_uploaded = (cw, ch)
         self.bg.use(0)
         self.inks[0].use(1)
         self.inks[1].use(2)
@@ -751,15 +934,22 @@ class GlassRenderer:
         pr["light"].value = tuple(float(v) for v in light)
         pr["glassiness"].value = float(glassiness)
         self.fbo.use()
-        self.ctx.scissor = None
-        self.fbo.clear(0, 0, 0, 0)
         # Don't shade the tall unused portion of the fixed window buffer, especially
         # when showing the short Gaming strip.
-        self.ctx.scissor = (max(0, px - sp), max(0, py - sp), min(self.W, pw + 2 * sp), min(self.H, h + 2 * sp))
+        self.ctx.scissor = (x0, y0, x1 - x0, y1 - y0)
+        self.fbo.clear(0, 0, 0, 0)
         self.vao.render(mode=self.ctx.TRIANGLES)
         self.ctx.scissor = None
         d = self.dib
-        self.fbo.read_into(d.arr, components=4, alignment=1)
+        # Read only the panel and shadow bounds. The DIB is persistent, so the
+        # cleared old bounds above remain transparent outside this rectangle.
+        rw, rh = x1 - x0, y1 - y0
+        needed = rw * rh * 4
+        if self._readback.size < needed:
+            self._readback = np.empty(needed, dtype=np.uint8)
+        self.fbo.read_into(self._readback, viewport=(x0, y0, rw, rh), components=4, alignment=1)
+        packed = self._readback[:rw * rh * 4].reshape(rh, rw, 4)
+        d.arr[y0:y1, x0:x1] = packed
         t1 = time.perf_counter()
         self.stats["gpu+readback"] = t1 - t0
 

@@ -43,7 +43,7 @@ Content begins at y=78, with 18 side/bottom inset, 16 inter-card gaps, and a 96-
 
 ## Elevation & Depth
 
-Reuse the inherited GPU refraction, dispersion, rim and soft SDF shadow. Dashboard cards use strength 6, bevel 14, rim 0.55, frost 0.82 and lift 0.06; selected capsule buttons use strength 4, bevel 8, rim 0.6, frost 1 and lift 0.14. These are native shader parameters, not CSS shadows. Geometry springs use k=230, damping ratio 0.94; content crossfade uses k=190, damping ratio 1. The overview is capped at 30 Hz and the dock at 60 Hz. Artwork stays stationary; optional audio bars remain local to it.
+Reuse the inherited GPU refraction, dispersion, rim and soft SDF shadow. Dashboard cards use strength 6, bevel 14, rim 0.55, frost 0.82 and lift 0.06; selected capsule buttons use strength 4, bevel 8, rim 0.6, frost 1 and lift 0.14. These are native shader parameters, not CSS shadows. Geometry springs use k=230, damping ratio 0.94; content crossfade uses k=190, damping ratio 1. The overview and dock share a 60 FPS animation budget; background capture refreshes independently so it does not block spring motion. Artwork stays stationary; optional audio bars remain local to it.
 
 ## Shapes
 

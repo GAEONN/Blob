@@ -42,7 +42,9 @@ user verification; automated coverage is not a hardware certification.
 Hardware readings depend on supported providers. There is no universal fan-control API.
 Exclusive-fullscreen overlay visibility is not guaranteed. Apple Music queue/search still
 requires its Windows app. Capture inclusion freezes the backdrop to avoid recursive glass.
-Audio and optional sensor/FPS integrations are shared Windows resources: do not run v3,
-standalone Dashboard or another enhancer with v4 audio boost enabled at the same time.
+Audio and optional sensor/FPS integrations are shared Windows resources: do not run v3 or the
+standalone Dashboard alongside v4. FxSound and v4 cannot own the Windows default audio route
+simultaneously; the Sound handoff closes FxSound before enabling Blob and restores the prior
+device when Blob is disabled.
 
 This release contains Windows Python source plus its installer, not a signed standalone EXE.
