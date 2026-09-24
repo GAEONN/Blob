@@ -654,6 +654,9 @@ void main() {
     // A coarse map measured on the CPU per capture, eased over time and read
     // with linear filtering, so frost follows a busy window smoothly.
     float busy = texture(busy_map, clamp(pp / panel_size, 0.0, 1.0)).r;
+    // Glassiness 0 is true clear glass and stays clear over anything; the extra
+    // frost over busy scenery fades in with the setting.
+    busy *= smoothstep(0.05, 0.35, glassiness);
     float frost_amt = min(max(max(frost, global_frost), busy * 0.96), mix(0.82, 0.96, busy));
     vec3 col = clear;
     if (frost_amt > 0.001) {
@@ -1213,8 +1216,10 @@ class GlassRenderer:
             self._blur_dirty = True
         # Frost radius follows the glassiness setting and grows over busy scenery:
         # about 6 px for light glass up to 22 px for fully frosted / text behind.
-        heavy = max(min(1.0, max(0.0, (float(glassiness) - 0.16) / 0.72)),
-                    float(self._busy_target.max()), float(self._busy.max()))
+        g = float(glassiness)
+        busy_weight = min(1.0, max(0.0, (g - 0.05) / 0.30))   # matches the shader's fade-in
+        heavy = max(min(1.0, max(0.0, (g - 0.16) / 0.72)),
+                    busy_weight * max(float(self._busy_target.max()), float(self._busy.max())))
         sigma = (6.0 + 16.0 * heavy) * self.S / 4.0
         if abs(sigma - self._blur_sigma) > 0.02:
             self._blur_sigma, self._blur_dirty = sigma, True
