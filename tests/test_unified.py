@@ -266,7 +266,7 @@ class UnifiedTests(unittest.TestCase):
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
-                           'blob.pyw': 'fb785805cf987e2a53ceb0cb2d78bead3d56e117eae4877afbcacb5312b5c043',
+                           'blob.pyw': '28c467d96e82f31e3c2c5928831c57b881769cc5f95d44356746cfb428873d72',
         }
         for name, digest in expected.items():
             source = (u.ROOT/name).read_text(encoding='utf-8').split('if __name__ == "__main__":')[0]

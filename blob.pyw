@@ -25,6 +25,7 @@ from gaming import GamingMonitor
 from sound import PRESET_ORDER, Sound
 from reactive import AudioMotion
 from toolset import ClipboardController, ToolController
+import admin_gaming
 from glass import user32
 
 
@@ -543,6 +544,7 @@ class Panel:
     MAGNIFIER_W, MAGNIFIER_H = 324, 324
     # Transparent canvas for concentric arc tools around the unchanged bubble.
     TOOL_PALETTE_W, TOOL_PALETTE_H = 220, 210
+    GAMING_CARD_H = 420
     RADIUS = 34     # the pane's corner; anything inset by p gets RADIUS - p (concentric radii)
     SS = 2          # content is drawn at 2x and filtered down on the GPU
     DETAIL_ROWS = 8  # keep large sensor inventories inside the renderer; scroll the rest
@@ -588,6 +590,7 @@ class Panel:
         self.tool_reveal = 0.0
         self.tools_open = False
         self.tool_view = None
+        self.gaming_toggle = None  # admin build only
         self.tool_minimized = False
         self.tool_glossiness = 0.78
         self.calculator_mode = "scientific"
@@ -782,6 +785,8 @@ class Panel:
 
     def tool_card_height(self):
         """The calculator and Clipboard share one monitor-safe card contract."""
+        if self.tool_view == "blank" and self.gaming_toggle:
+            return self.GAMING_CARD_H
         return self.calculator_height() if self.tool_view == "calculator" else self.TOOL_H
 
     def tool_header_layout(self, leading=True):
@@ -1354,7 +1359,8 @@ class Panel:
         # satellite intentionally stays blank: it is a quiet, editable slot
         # for the next tool rather than a misleading currency shortcut.
         items = (("calculator", "\uE8EF", 16), ("clipboard", "\uE8C8", 13),
-                 ("magnifier", "\uE721", 13), ("blank", None, 0))
+                 ("magnifier", "\uE721", 13),
+                 ("blank", "\uE7FC" if self.gaming_toggle else None, 15))
         for index, (tool, icon, icon_size) in enumerate(items):
             key = "tool:restore" if self.tool_minimized and self.tool_view == tool else "tool:" + tool
             delay = index * .045
@@ -1409,6 +1415,9 @@ class Panel:
             return
         if self.tool_view == "clipboard":
             self._clipboard_card(clipboard)
+            return
+        if self.tool_view == "blank" and self.gaming_toggle:
+            self._gaming_mode_card(self.gaming_toggle)
             return
         if self.tool_view == "blank":
             self._blank_tool_card()
@@ -1846,6 +1855,41 @@ class Panel:
         width = max(1, round(1.25*S))
         self.di.line((cx-arm, cy, cx+arm, cy), fill=205, width=width)
         self.di.line((cx, cy-arm, cx, cy+arm), fill=205, width=width)
+
+    def _gaming_mode_card(self, gm):
+        """Admin-only: one switch for this PC's GamingModeToggle scheduled task."""
+        S, W = self.S, self.w
+        header = self.tool_header_layout(leading=True)
+        self.label(header["leading"], 36*S, "\uE7FC", 17, a=245, anchor="mm", icon=True)
+        self.label(header["title"], 36*S, "Gaming Mode", 16, "Semibold Text", 245, header["title_anchor"])
+        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "\uE73F", 12, always=True)
+        self.glass_button("tool:close", header["close"], 36*S, 15*S, "\uE711", 12, always=True)
+        busy, shown_on = gm.busy, gm.shown_on
+        row = (24*S, 76*S, W-24*S, 156*S)
+        self.static(row, 26*S, strength=4*S, bevel=15*S, rim=.54,
+                    frost=max(.22, self.tool_glossiness-.46), lift=.10, raised=.72)
+        self.label(46*S, 104*S, gm.status_text(), 17, "Semibold Text", 245, "lm")
+        hint = "Wait about 10 seconds" if busy else "Tap to switch on" if not shown_on else "Tap to go back to normal"
+        self.label(46*S, 130*S, hint, 12, "Regular", 190, "lm")
+        box = (W-94*S, 102*S, W-46*S, 130*S)
+        # While the task runs the switch sits at its target but leaves the hit
+        # map, so a second click cannot start another toggle mid-switch.
+        if not busy:
+            self.rects["toggle:gamingmode"] = box
+        self.controls.append(("toggle", "gamingmode", box, shown_on))
+        y = 186*S
+        self.label(28*S, y, "When on" if shown_on else "When off", 12, "Semibold Text", 200, "lm")
+        y += 26*S
+        for line in admin_gaming.DESCRIPTION[bool(shown_on)]:
+            for part in self.wrap(line, 13, "Regular", W - 76*S):
+                self.label(32*S, y, "\u2022", 13, "Regular", 170, "lm")
+                self.label(48*S, y, part, 13, "Regular", 215, "lm")
+                y += 22*S
+        if gm.error:
+            y += 14*S
+            for part in self.wrap(gm.error, 12, "Semibold Text", W - 56*S)[:4]:
+                self.label(28*S, y, part, 12, "Semibold Text", 235, "lm")
+                y += 19*S
 
     @property
     def magnifier_active(self):
@@ -2563,6 +2607,7 @@ class App:
         self.tools = ToolController()
         self.clipboard = ClipboardController()
         self._clipboard_poll_at = 0.0
+        self._gaming_toggle = admin_gaming.GamingModeToggle() if admin_gaming.available() else None
         self.hover_since = (None, 0.0)
         self.last_queue = 0.0
         self.queue_track = None
@@ -2573,6 +2618,7 @@ class App:
         dpi = user32.GetDpiForSystem() if hasattr(user32, "GetDpiForSystem") else 96
         self.S = S = dpi / 96
         self.panel = Panel(S)
+        self.panel.gaming_toggle = self._gaming_toggle
         self.panel.page = os.environ.get("BLOB_PAGE", "blob")  # debug: open on a given page
         self.panel.am = self.am
         self.panel_side = "right"
@@ -4098,6 +4144,9 @@ class App:
             self._clipboard_poll_at = now + .12
             if self.clipboard.poll():
                 self.draw_content()
+        gm = self.panel.gaming_toggle
+        if gm and gm.poll() and self.panel.tools_open and self.panel.tool_view == "blank":
+            self.draw_content()
         if self._update_tabs_side():
             # A drag can cross the monitor midpoint without changing any
             # sensor state; redraw immediately so the menu/button follows it.
@@ -4739,6 +4788,8 @@ class App:
                 self.startup = startup_enabled()
             elif key == "capture":
                 self.set_captureable(not self.captureable)
+            elif key == "gamingmode" and self.panel.gaming_toggle:
+                self.panel.gaming_toggle.toggle()
             elif key == "backdrop":
                 self.panel.backdrop = not self.panel.backdrop
                 cfg = engine.load_config()
