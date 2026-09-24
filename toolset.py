@@ -531,7 +531,7 @@ class ClipboardController:
             first = os.path.basename(paths[0]) or paths[0]
             return first if len(paths) == 1 else f"{first} + {len(paths)-1} more"
         if kind == "Image":
-            return "Image available in Windows clipboard"
+            return "Copied image"
         return "Clipboard content"
 
     @staticmethod
@@ -728,6 +728,51 @@ class ClipboardController:
 
     def move_page(self, amount, page_size=5):
         self.page = min(max(0, self.page + int(amount)), self.page_count(page_size) - 1)
+
+    THUMB_PX = 256
+    IMAGE_FILE_TYPES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico")
+    MAX_THUMB_FILE_BYTES = 60 * 1024 * 1024
+
+    @classmethod
+    def preview_file(cls, item):
+        """The first copied file when it is a picture Blob can preview."""
+        if item.get("kind") != "Files":
+            return None
+        paths = list(item.get("content") or [])
+        path = paths[0] if paths else ""
+        return path if str(path).lower().endswith(cls.IMAGE_FILE_TYPES) else None
+
+    def thumbnail(self, item):
+        """A small RGBA preview for image items and copied picture files.
+
+        Decoded once per item and kept in memory with the entry, so redraws
+        never touch the full-size bitmap or the disk again.
+        """
+        if not item:
+            return None
+        if "_thumb" in item:
+            return item["_thumb"]
+        thumb = None
+        try:
+            import io
+            from PIL import BmpImagePlugin, Image
+            source = None
+            if item.get("kind") == "Image" and item.get("content"):
+                source = BmpImagePlugin.DibImageFile(io.BytesIO(item["content"]))
+            elif self.preview_file(item):
+                path = self.preview_file(item)
+                if 0 < os.path.getsize(path) <= self.MAX_THUMB_FILE_BYTES:
+                    source = Image.open(path)
+                    source.draft("RGB", (self.THUMB_PX, self.THUMB_PX))  # fast JPEG downscale
+            if source is not None:
+                source.thumbnail((self.THUMB_PX, self.THUMB_PX))
+                thumb = source.convert("RGBA")
+                if item.get("kind") == "Image" and thumb.getextrema()[3] == (0, 0):
+                    thumb.putalpha(255)  # 32-bit DIBs often carry an unused, all-zero alpha
+        except Exception:
+            thumb = None
+        item["_thumb"] = thumb
+        return thumb
 
     def item(self, ident=None, visible_only=False):
         ident = ident or self.selected_id

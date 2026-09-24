@@ -1212,15 +1212,31 @@ class Panel:
         self._draw_tool_satellites()
 
     def fit(self, text, size, style, max_w):
-        """Ellipsize text to max_w pixels."""
-        font = self.text_font(text, size, style)
-        if font.getlength(text) <= max_w:
+        """Ellipsize text to max_w pixels.
+
+        Clipboard rows can hold 100k characters, so never measure more than
+        could possibly fit, and binary-search the cut instead of trimming one
+        character per measurement.
+        """
+        text = str(text)
+        font = self.text_font(text[:512], size, style)
+        # No glyph is narrower than a fifth of the em, so anything beyond this
+        # many characters is already off the end of the line.
+        cap = int(max_w / max(1.0, .2 * getattr(font, "size", size))) + 2
+        clipped = len(text) > cap
+        text = text[:cap]
+        if not clipped and font.getlength(text) <= max_w:
             return text
         if font.getlength("…") > max_w:
             return ""
-        while text and font.getlength(text + "…") > max_w:
-            text = text[:-1]
-        return text.rstrip() + "…"
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if font.getlength(text[:mid] + "…") <= max_w:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo].rstrip() + "…"
 
     def wrap(self, text, size, style, max_w):
         """Wrap without shrinking type, including device names with no spaces."""
@@ -1579,6 +1595,37 @@ class Panel:
                 self.di.text((box[0]+22*S, y+20*S), "\uE73E", font=self.f.icon(12), fill=245, anchor="mm")
             self.label(box[0]+44*S, y+20*S, label, 15, "Semibold Text" if selected == value else "Regular", 245, "lm")
 
+    def _clip_thumb(self, clipboard, item, box, radius, contain=False):
+        """Composite a cached picture preview into ``box``; False when there is none."""
+        thumb = clipboard.thumbnail(item) if clipboard and item else None
+        if thumb is None:
+            return False
+        x0, y0, x1, y1 = [int(round(v)) for v in box]
+        w, h = max(1, x1 - x0), max(1, y1 - y0)
+        cache = self.__dict__.setdefault("_clip_thumb_cache", {})
+        key = (item["id"], w, h, contain)
+        img = cache.get(key)
+        if img is None:
+            iw, ih = thumb.size
+            if contain:
+                scale = min(w / iw, h / ih)
+                fw, fh = max(1, round(iw * scale)), max(1, round(ih * scale))
+                img = thumb.resize((fw, fh), Image.LANCZOS)
+            else:
+                # Cover-crop, like album art: fill the tile without squashing.
+                scale = max(w / iw, h / ih)
+                img = thumb.resize((max(w, round(iw * scale)), max(h, round(ih * scale))), Image.LANCZOS)
+                l, t = (img.width - w) // 2, (img.height - h) // 2
+                img = img.crop((l, t, l + w, t + h))
+            mask = (glass.shape_mask(img.width, img.height, min(radius, img.width / 2, img.height / 2)) * 255)
+            alpha = np.minimum(np.asarray(img.getchannel("A"), dtype=np.float32), mask).astype(np.uint8)
+            img.putalpha(Image.fromarray(alpha))
+            if len(cache) > 96:
+                cache.clear()
+            cache[key] = img
+        self.pic.alpha_composite(img, (x0 + (w - img.width) // 2, y0 + (h - img.height) // 2))
+        return True
+
     def _clipboard_mark(self, cx, cy, kind, alpha=225, size=18):
         """Compact vector marks for clipboard kinds; no generic emoji glyphs."""
         S, d = self.S, self.di
@@ -1650,11 +1697,24 @@ class Panel:
                 self.label(W-28*S, 267*S, "Mixed types", 11, "Regular", 185, "rm")
         elif selected:
             kind = selected.get("kind", "Other")
-            self._clipboard_mark(49*S, 183*S, kind, 235, 18)
-            self.label(76*S, 173*S, kind.upper(), 11, "Semibold Text", 220, "lm")
+            # Pictures (copied images or image files) get a real thumbnail on
+            # the left; the details move beside it.
+            has_pic = self._clip_thumb(clipboard, selected, (36*S, 162*S, 148*S, 284*S), 16*S, contain=True)
+            tx = 160*S if has_pic else 76*S
+            if not has_pic:
+                self._clipboard_mark(49*S, 183*S, kind, 235, 18)
+            self.label(tx, 173*S, kind.upper(), 11, "Semibold Text", 220, "lm")
             content = selected.get("content", "")
             if kind == "Text":
-                raw_lines = [line.strip() for line in str(content).splitlines() if line.strip()] or ["Empty text"]
+                # Show the actual words, wrapped over three lines, so a glance
+                # tells what was copied.
+                flat = " ".join(str(content)[:600].split()) or "Empty text"
+                wrapped = self.wrap(flat, 13, "Regular", W - 112*S)
+                if len(wrapped) > 3 or len(str(content)) > 600:
+                    wrapped = wrapped[:2] + [self.fit(" ".join(wrapped[2:]) + " …", 13, "Regular", W - 112*S)]
+                for index, line in enumerate(wrapped[:3]):
+                    self.label(76*S, (195 + index*20)*S, line, 13, "Regular", 240, "lm")
+                raw_lines = []
                 meta = f"{len(str(content)):,} characters"
             elif kind == "Files":
                 raw_lines = [os.path.basename(path) or path for path in list(content)[:2]] or ["No files"]
@@ -1669,20 +1729,22 @@ class Panel:
                 resolution = f"{dimensions[0]:,} × {dimensions[1]:,}" if len(dimensions) == 2 else "Image"
                 if clipboard and clipboard.can_copy(selected):
                     raw_lines = [resolution, "Cached locally for this Blob session."]
-                    meta = f"{size_label} · ready to paste"
+                    meta = size_label
                 else:
                     raw_lines = [resolution, "Use the source app's Paste command."]
                     meta = "Live image only"
             else:
                 raw_lines = ["Clipboard content is not readable yet"]
                 meta = "Unsupported format"
-            width = W - 112*S
+            width = W - tx - 36*S
             for index, line in enumerate(raw_lines[:2]):
-                self.label(76*S, (204 + index*24)*S, self.fit(str(line), 16 if index == 0 else 13,
+                self.label(tx, ((200 + index*22) if has_pic else (204 + index*24))*S, self.fit(str(line), 16 if index == 0 else 13,
                            "Semibold Text" if index == 0 else "Regular", width),
                            16 if index == 0 else 13, "Semibold Text" if index == 0 else "Regular", 248 if index == 0 else 195, "lm")
             stamp = time.strftime("%H:%M", time.localtime(selected.get("time", time.time())))
-            self.label(76*S, 255*S, f"{meta} · {stamp}", 11, "Regular", 180, "lm")
+            meta_w = (W - 148*S - tx) if has_pic else W - 112*S
+            self.label(tx, (262 if kind == "Text" else 255)*S if not has_pic else 248*S,
+                       self.fit(f"{meta} · {stamp}", 11, "Regular", meta_w), 11, "Regular", 180, "lm")
             ident = selected["id"]
             if clipboard and clipboard.can_copy(selected):
                 self.tool_button("clip:copy:"+ident, W-102*S, 267*S, 17*S, text="Copy", width=72*S, height=34*S, size=12)
@@ -1712,7 +1774,8 @@ class Panel:
             key = "clip:select:"+item["id"]
             self.rects[key] = rect
             self.controls.append(("hover", key, rect, 18*S))
-            self._clipboard_mark(47*S, y+26*S, item.get("kind", "Other"), 220, 14)
+            if not self._clip_thumb(clipboard, item, (31*S, y+10*S, 63*S, y+42*S), 9*S):
+                self._clipboard_mark(47*S, y+26*S, item.get("kind", "Other"), 220, 14)
             content = item.get("content", "")
             if item.get("kind") == "Text":
                 summary = " ".join(str(content).split()) or "Empty text"

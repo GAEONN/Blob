@@ -621,11 +621,24 @@ void main() {
     // Low glassiness is genuinely clear: do not force a full-panel blur just
     // because the glass control is slightly above zero.
     float global_frost = smoothstep(0.16, 0.88, glassiness) * 0.72;
-    float frost_amt = min(max(frost, global_frost), 0.82);
+    // Busy scenery (windows full of text, mixed black and white UI) shows through
+    // light frost as sharp shapes that compete with Blob's own words. Measure the
+    // fine detail behind the whole panel (sharp minus soft on a 4x4 grid) and blur
+    // harder when it is busy; calm wallpapers stay clear. One panel-wide value
+    // keeps the frost even: a per-pixel estimate flickers along glyph edges.
+    float busy = 0.0;
+    for (int k = 0; k < 4; k++) {
+        for (int j = 0; j < 4; j++) {
+            vec2 q = panel_pos + cap_origin + panel_size * vec2(0.125 + 0.25 * float(k), 0.125 + 0.25 * float(j));
+            busy += abs(luma(at(q, 2.0)) - luma(at(q, 5.0)));
+        }
+    }
+    busy = smoothstep(0.03, 0.10, busy / 16.0);
+    float frost_amt = min(max(max(frost, global_frost), busy * 0.96), mix(0.82, 0.96, busy));
     vec3 col = clear;
     if (frost_amt > 0.001) {
-        float rad = mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S;
-        float lod = 0.85 + 1.10 * glassiness;
+        float rad = mix(mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S, 22.0 * S, busy);
+        float lod = mix(0.85 + 1.10 * glassiness, 5.2, busy);
         vec3 acc = vec3(0.0);
         int tap_count = frost_amt > 0.42 ? 12 : 6;
         for (int k = 0; k < 12; k++) {
@@ -640,7 +653,7 @@ void main() {
     // text colour follows the scenery behind each spot; the glass leans away from the ink
     float local = luma(at(p, 4.5));
     float dark = smoothstep(0.50, 0.66, local);
-    float push = 0.10 + 0.32 * glassiness;
+    float push = 0.10 + 0.32 * glassiness + 0.12 * busy;   // busy scenery: a firmer backing
     col = mix(col, vec3(0.0), push * (1.0 - dark));
     col = mix(col, vec3(1.0), (push + 0.08) * dark);
     col = mix(col, mix(ambient.rgb, ambient2, clamp(pp.y / panel_size.y, 0.0, 1.0)), ambient.a);
