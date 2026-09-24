@@ -410,7 +410,12 @@ vec2 contentUV(vec2 size, vec2 pp) {
 float inkAt(sampler2D t, vec2 size, vec2 pp) {
     vec2 uv = contentUV(size, pp);
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return 0.0;
-    return texture(t, uv).r;
+    return textureLod(t, uv, 0.0).r;
+}
+float inkHaloAt(sampler2D t, vec2 size, vec2 pp, float lod) {   // text coverage, softened
+    vec2 uv = contentUV(size, pp);
+    if (uv.x < -0.05 || uv.y < -0.05 || uv.x > 1.05 || uv.y > 1.05) return 0.0;
+    return textureLod(t, uv, lod).r;
 }
 vec4 accAt(sampler2D t, vec2 size, vec2 pp) {
     vec2 uv = contentUV(size, pp);
@@ -673,16 +678,35 @@ void main() {
     }
 
     // Text must contrast with the glass it sits on. Blending white to black by the scenery
-    // left mid-tone wallpapers with grey text on grey glass. Estimate that glass from a wide
-    // (~128 px) sample so a whole line usually gets one colour, and flip over a narrow band at
-    // ~0.48 luma, where white and near-black ink both reach ~4.3:1 against it.
-    float region = luma(at(p, 7.0));
-    float glass_l = mix(mix(region, 0.0, push * (1.0 - dark)), 1.0, (push + 0.08) * dark);
-    dark = smoothstep(0.47, 0.49, glass_l);
+    // left mid-tone wallpapers with grey text on grey glass, and any blend band turns whole rows
+    // grey where the glass sits near the threshold. Estimate that glass across the panel's full
+    // width at this row (wide ~128 px samples), so a line of text gets one colour and a vertical
+    // wallpaper edge never splits a word; then pick pure white or near-black at ~0.48 luma (both
+    // ~4.3:1 there), antialiased over a single pixel so any boundary is a clean edge.
+    // Where the scenery here differs sharply from the row (a white window beside a dark
+    // wallpaper), follow it instead: splitting at a hard edge beats invisible text.
+    float row_l = 0.0;
+    for (int k = 0; k < 5; k++) {
+        vec2 row = vec2(panel_pos.x + panel_size.x * (0.1 + 0.2 * float(k)), w.y) + cap_origin;
+        row_l += luma(at(row, 7.0)) * 0.2;
+    }
+    float here_l = luma(at(p, 6.0));
+    float region = mix(row_l, here_l, smoothstep(0.12, 0.22, abs(here_l - row_l)));
+    float row_dark = smoothstep(0.50, 0.66, region);   // the tint above, evaluated for the row
+    float glass_l = mix(mix(region, 0.0, push * (1.0 - row_dark)), 1.0, (push + 0.08) * row_dark);
+    float glass_aa = max(fwidth(glass_l), 1e-4);
+    dark = smoothstep(0.48 - glass_aa, 0.48 + glass_aa, glass_l);
 
     // Album artwork is opaque: text must contrast with the cover, not the desktop.
     float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);
     vec3 ink_col = mix(vec3(1.0), vec3(0.07), ink_dark);
+    // Legibility halo: where the glass right under the text is too close to the ink colour
+    // (a thin bright streak refracted under white text), lean the glass around the glyphs away
+    // from the ink, like a vibrancy backing. Elsewhere it stays off, so the glass is unchanged.
+    float halo_lod = 2.6 + log2(max(S, 1.0));
+    float halo = clamp(mix(inkHaloAt(ink0, ink0_size, pp, halo_lod), inkHaloAt(ink1, ink1_size, pp, halo_lod), fade) * 2.4, 0.0, 1.0);
+    float risk = 1.0 - smoothstep(0.22, 0.42, abs(luma(col) - luma(ink_col)));
+    col = mix(col, vec3(1.0) - ink_col * 0.9, halo * risk * 0.55 * (1.0 - pic.a));
     // Opaque covers hide desktop refraction: retain readable frosted bars above art.
     col = mix(col, ink_col, viz_coverage * pic.a * .72);
     col = mix(col, ink_col, fill * 0.85);
@@ -885,6 +909,8 @@ class GlassRenderer:
         for data, comps in ((ink, 1), (acc, 4), (pic, 4), (backdrop, 4)):
             t = self.ctx.texture((w, h), comps, data.tobytes(), alignment=1)
             t.filter = (self.ctx.LINEAR, self.ctx.LINEAR)
+            if comps == 1:   # ink: mipmaps feed the legibility halo; inkAt still reads level 0
+                t.build_mipmaps()
             new.append(t)
         layers = [self.inks, self.accs, self.pics, self.backdrops]
         for lst, t in zip(layers, new):
@@ -905,6 +931,7 @@ class GlassRenderer:
         if self.inks[1] is None or self.inks[1].size != (w, h):
             return self.set_content(ink, accent, pic, backdrop, instant=True)
         self.inks[1].write(ink_a.tobytes())
+        self.inks[1].build_mipmaps()
         self.accs[1].write(acc_a.tobytes())
         self.pics[1].write(pic_a.tobytes())
         self.backdrops[1].write(backdrop_a.tobytes())
