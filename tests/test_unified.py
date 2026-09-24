@@ -260,7 +260,7 @@ class UnifiedTests(unittest.TestCase):
         # Normalized shared-source hashes; works in downloaded archives without Git installed.
         expected = {
             'engine.py': 'fddf6cd47f896967851540034a6f787732f832a3ba962d50e1865d45ad7f37c3',
-            'glass.py': '350a431b5e021e283e4fce33f72ba7c394801ad41bb648bb035046ee7aadeeee',
+            'glass.py': 'e58a3a0673af1a7591314876854e45de69698d092915c815f81bd47502d51436',
                            'media.py': '746b402550e783cd195076795f5f9aacaa7bf6c7a30155c2f6153f144fe92807',
             'sound.py': 'cdb5fc4bd15a60f2509415de68fd6cea61e219ca8888ec078c5b92e909f874b1',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',

@@ -181,13 +181,14 @@ uniform sampler2D src;
 uniform vec2 step_uv;      // one output texel along the blur direction
 uniform float src_lod;     // 2.0 reads the capture's quarter-size mip level
 uniform vec2 out_size;
+uniform float sigma;       // in output texels
 out vec4 frag;
 void main() {
     vec2 uv = gl_FragCoord.xy / out_size;
     vec4 acc = vec4(0.0);
     float total = 0.0;
     for (int i = -10; i <= 10; i++) {
-        float w = exp(-float(i * i) / 50.0);          // sigma 5 texels = 20 px
+        float w = exp(-float(i * i) / (2.0 * sigma * sigma));
         acc += w * textureLod(src, uv + step_uv * float(i), src_lod);
         total += w;
     }
@@ -656,24 +657,13 @@ void main() {
     float frost_amt = min(max(max(frost, global_frost), busy * 0.96), mix(0.82, 0.96, busy));
     vec3 col = clear;
     if (frost_amt > 0.001) {
-        float rad = mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S;
-        float lod = 0.85 + 1.10 * glassiness;
-        vec3 acc = vec3(0.0);
-        int tap_count = frost_amt > 0.42 ? 12 : 6;
-        for (int k = 0; k < 12; k++) {
-            if (k >= tap_count) break;
-            acc += at(p + d + TAPS[k] * rad, lod);
-        }
-        vec3 frosted = acc / float(tap_count);
-        if (busy > 0.001) {
-            // Busy scenery: the smooth Gaussian, with its black/white extremes
-            // drawn toward the area's average so text-heavy windows become a
-            // gentle, even haze instead of bright and dark blotches.
-            vec3 smooth_bg = textureLod(bgblur, (p + d) / bg_size, 0.0).bgr;
-            vec3 mean_bg = at(p, 7.5);
-            smooth_bg = mix(smooth_bg, mean_bg, 0.35);
-            frosted = mix(frosted, smooth_bg, busy);
-        }
+        // Real frosted glass: one smooth Gaussian of the scenery (a pre-pass whose
+        // radius follows the glassiness setting), never scattered taps, which
+        // read as blotches and bright patches on detailed backgrounds.
+        vec3 frosted = textureLod(bgblur, (p + d) / bg_size, 0.0).bgr;
+        // Busy scenery: also draw the blur's black/white extremes toward the
+        // area's average so text-heavy windows become an even haze.
+        frosted = mix(frosted, mix(frosted, at(p, 7.5), 0.35), busy);
         col = mix(clear, frosted, frost_amt);
     }
     float l = luma(col);
@@ -902,6 +892,7 @@ class GlassRenderer:
         self.blur_fbo = [self.ctx.framebuffer(color_attachments=[tex]) for tex in self.blur_tex]
         self.blur_prog["out_size"].value = (float(blur_size[0]), float(blur_size[1]))
         self._blur_dirty = True
+        self._blur_sigma = 0.0
         self.inks = [None, None]
         self.accs = [None, None]
         self.pics = [None, None]
@@ -1139,13 +1130,14 @@ class GlassRenderer:
     def _blur_background(self):
         """Two-pass Gaussian of the capture into ``blur_tex[1]`` (~0.2 ms on the GPU).
 
-        Only runs while busy scenery needs it and only when the capture changed.
+        Runs only when the capture or the frost radius changed.
         """
         size = self.blur_tex[0].size
         bp = self.blur_prog
         self.blur_fbo[0].use()
         self.bg.use(0)
         bp["src"].value = 0
+        bp["sigma"].value = float(max(0.5, self._blur_sigma))
         bp["src_lod"].value = 2.0
         bp["step_uv"].value = (1.0 / size[0], 0.0)
         self.blur_vao.render(mode=self.ctx.TRIANGLES)
@@ -1219,7 +1211,14 @@ class GlassRenderer:
             self.bg.build_mipmaps()
             self._bg_dirty = False
             self._blur_dirty = True
-        if self._blur_dirty and max(float(self._busy_target.max()), float(self._busy.max())) > 0.002:
+        # Frost radius follows the glassiness setting and grows over busy scenery:
+        # about 6 px for light glass up to 22 px for fully frosted / text behind.
+        heavy = max(min(1.0, max(0.0, (float(glassiness) - 0.16) / 0.72)),
+                    float(self._busy_target.max()), float(self._busy.max()))
+        sigma = (6.0 + 16.0 * heavy) * self.S / 4.0
+        if abs(sigma - self._blur_sigma) > 0.02:
+            self._blur_sigma, self._blur_dirty = sigma, True
+        if self._blur_dirty:
             self._blur_background()
             self._bg_uploaded = (cw, ch)
         self.bg.use(0)
