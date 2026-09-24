@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="blob-logo.png" alt="Blob logo" width="120">
 </p>
 
@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A floating liquid-glass control panel for Windows</b><br>
-  Music controls, PC temperatures, sound enhancement and an in-game FPS counter — in one small, beautiful window.
+  Music controls, PC temperatures, sound enhancement and an in-game FPS counter â€” in one small, beautiful window.
 </p>
 
 <p align="center">
@@ -33,10 +33,10 @@ It takes about 5 minutes. You don't need to know anything about coding.
 
 1. **[Download the installer (Install-Blob.cmd)](https://github.com/GAEONN/Blob/releases/latest/download/Install-Blob.cmd)**
 2. Open your **Downloads** folder and **double-click `Install-Blob.cmd`**.
-   - If Windows says *"Windows protected your PC"*, click **More info → Run anyway**.
+   - If Windows says *"Windows protected your PC"*, click **More info â†’ Run anyway**.
      If your browser asks whether to keep the file, choose **Keep**.
 3. A black window shows the progress. When Windows asks *"Do you want to allow this app to make
-   changes?"*, click **Yes** — this installs the optional sensor, sound and FPS helpers.
+   changes?"*, click **Yes** â€” this installs the optional sensor, sound and FPS helpers.
 
 Blob opens by itself when it's done, and a **Blob v5** icon appears on your desktop.
 **Restart your PC once** afterwards so the sound and FPS features finish setting up.
@@ -56,20 +56,20 @@ irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
 
 - **Windows 11** (64-bit)
 - An internet connection during installation
-- That's it — the installer sets up everything else, including Python, automatically.
+- That's it â€” the installer sets up everything else, including Python, automatically.
 
 ## How to use it
 
-| To… | Do this |
+| Toâ€¦ | Do this |
 | --- | --- |
 | Show or hide Blob | Click the **Blob icon** near the clock (bottom-right of the taskbar). You may need to click **^** to see it. |
-| Switch between the small view and the big Dashboard | Press **F10** while Blob is selected, or right-click the Blob icon → **SmallBlob / Dashboard** |
+| Switch between the small view and the big Dashboard | Press **F10** while Blob is selected, or right-click the Blob icon â†’ **SmallBlob / Dashboard** |
 | Move Blob | Drag it anywhere |
 | Let your mouse click *through* Blob (for games) | Press **Ctrl + Alt + V** to lock it; press again to unlock |
-| Start Blob with Windows | Right-click the Blob icon → **Start with Windows** |
-| Close Blob | Right-click the Blob icon → **Exit Blob** |
+| Start Blob with Windows | Right-click the Blob icon â†’ **Start with Windows** |
+| Close Blob | Right-click the Blob icon â†’ **Exit Blob** |
 
-Each view — **System**, **Sound**, **Music** and **Gaming** — can also shrink into a small bubble.
+Each view â€” **System**, **Sound**, **Music** and **Gaming** â€” can also shrink into a small bubble.
 The [feature guide](#feature-guide) below explains every button.
 
 ## Update to the newest version
@@ -79,13 +79,13 @@ It closes Blob, installs the latest version, keeps all your settings, and opens 
 
 ## Uninstall
 
-1. Right-click the Blob icon near the clock → turn off **Start with Windows** → **Exit Blob**.
+1. Right-click the Blob icon near the clock â†’ turn off **Start with Windows** â†’ **Exit Blob**.
 2. Open File Explorer, paste `%LOCALAPPDATA%\Programs` into the address bar, press Enter, and delete
    the **Blob-v5** folder. Do the same for `%LOCALAPPDATA%` and its **Blob-v5** folder (your settings).
 3. Delete the **Blob v5** shortcut from your desktop.
 
 Optional helpers the installer may have added (safe to keep, or remove if you like):
-the **Blob Sensors** task in *Task Scheduler*, **PawnIO** in *Settings → Apps*, and the
+the **Blob Sensors** task in *Task Scheduler*, **PawnIO** in *Settings â†’ Apps*, and the
 **VB-CABLE** audio driver (run its setup from [vb-audio.com/Cable](https://vb-audio.com/Cable/) and choose *Remove*).
 
 ## Common questions
@@ -116,14 +116,14 @@ helper can start. If it's still missing, your PC's hardware doesn't expose that 
 <summary><b>The FPS counter shows nothing.</b></summary>
 
 Sign out of Windows and back in once after installing (or restart). Play in **windowed** or
-**borderless** mode — true fullscreen games can hide overlays.
+**borderless** mode â€” true fullscreen games can hide overlays.
 </details>
 
 <details>
 <summary><b>Sound enhancement doesn't work.</b></summary>
 
 Restart your PC once after installing so the VB-CABLE audio driver finishes setting up, then turn
-Sound on in Blob. If you use FxSound, click **Use Blob audio** in Blob's Sound view — the two can't
+Sound on in Blob. If you use FxSound, click **Use Blob audio** in Blob's Sound view â€” the two can't
 run at the same time.
 </details>
 
@@ -137,7 +137,7 @@ in Blob's Settings.
 <details>
 <summary><b>I found a problem or have an idea.</b></summary>
 
-[Open an issue](https://github.com/GAEONN/Blob/issues/new) and describe what happened — screenshots help a lot.
+[Open an issue](https://github.com/GAEONN/Blob/issues/new) and describe what happened â€” screenshots help a lot.
 </details>
 
 ## Screenshots
@@ -147,14 +147,14 @@ Settings and Tools:
 
 <img src="docs/screenshots/gallery.jpg" alt="Every Blob view, one row per section: System, Sound, Music, Music library, Gaming, Settings and Tools" width="100%">
 
-**Gaming strip** — regular, with the view menu open, and compact:
+**Gaming strip** â€” regular, with the view menu open, and compact:
 
 <img src="docs/screenshots/horizontal-regular.png" alt="Gaming strip" width="680">
 <img src="docs/screenshots/horizontal-menu-open.png" alt="Gaming strip with the view menu open" width="680">
 <img src="docs/screenshots/horizontal-compact.png" alt="Compact gaming strip" width="680">
 
-<sub>Screenshots are Blob's real glass rendered at 2× with sample data: *Honestly, Nevermind* by Drake
-playing, shown with original placeholder cover art. Desktop photo by
+<sub>Screenshots are Blob's real glass rendered at 2Ã— with sample data: *Honestly, Nevermind* by Drake
+playing; album artwork belongs to its owners. Desktop photo by
 [Muriel Liu](https://unsplash.com/@muriel_1) on [Unsplash](https://unsplash.com/photos/vCp7Q2ACSQg).
 Earlier gaming-strip designs are in [docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).</sub>
 
@@ -170,7 +170,7 @@ Earlier gaming-strip designs are in [docs/screenshots/gaming-layouts](docs/scree
 | **Gaming** | Always-on-top FPS, frame time, temperatures, utilization, memory, fan, and GPU-power strip |
 | **Settings** | Startup, capture visibility, pointer style, overlay lock shortcut, and per-feature options |
 
-SmallBlob retains Settings → Appearance → Size → Regular / Compact, as well as its System, Sound
+SmallBlob retains Settings â†’ Appearance â†’ Size â†’ Regular / Compact, as well as its System, Sound
 and Music bubbles, square album-art view, and Gaming's matching Horizontal / Vertical strips plus
 the small FPS/frame-time Bubble. Choose the Gaming state in Settings; Bubble returns to the
 last strip orientation through its inset satellite. Dashboard adds the simultaneous overview
@@ -274,7 +274,7 @@ avoid recursive self-capture.
 
 ## For developers
 
-Blob is written in Python with OpenGL and native Win32 APIs — no browser window and no Electron.
+Blob is written in Python with OpenGL and native Win32 APIs â€” no browser window and no Electron.
 SmallBlob and the Dashboard are two views of one app: they share one window, tray icon, audio
 engine, media session, sensor monitor and settings. See [docs/V5-NOTES.md](docs/V5-NOTES.md).
 
@@ -312,7 +312,7 @@ To start an installed checkout manually, use `Launch Blob.cmd`, the desktop shor
 
 - Windows 11
 - A GPU and driver supporting OpenGL 3.3
-- Python 3.10–3.13; the installer can provision Python through WinGet
+- Python 3.10â€“3.13; the installer can provision Python through WinGet
 - Administrator approval only for the optional drivers, sensor provider, and FPS permission setup
 
 ### Development
@@ -352,7 +352,7 @@ Key files:
 | [`applemusic.py`](applemusic.py) | Optional Apple Music search, queue, and playback integration |
 | [`DESIGN.md`](DESIGN.md) | Visual system, shader model, interaction rules, and spring behavior |
 | [`PRODUCT.md`](PRODUCT.md) | Product behavior and feature contract |
-| [`docs/`](docs) | Release notes for v3–v5, screenshots, and the original build brief |
+| [`docs/`](docs) | Release notes for v3â€“v5, screenshots, and the original build brief |
 
 ### Current limitations
 
