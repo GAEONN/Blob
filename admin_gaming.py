@@ -26,7 +26,7 @@ DESCRIPTION = {
            "Wi-Fi power saving off · RAM freed"),
     False: ("Odyssey 1920×1080 · 240 Hz · 100%",
             "Windows Update running normally",
-            "iCloud and WhatsApp open",
+            "Reopens only the apps it closed",
             "Switch on before launching Fortnite"),
 }
 
