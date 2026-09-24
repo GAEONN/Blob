@@ -72,11 +72,11 @@ def cover(image, width, height):
     return image.crop((left, top, left + width, top + height))
 
 
-def label(draw, xy, text):
+def label(draw, xy, text, scale=1):
     """Caption that stays legible over a photo."""
     x, y = xy
     try:
-        font = ImageFont.truetype("segoeui.ttf", 12)
+        font = ImageFont.truetype("segoeui.ttf", round(12 * scale))
     except OSError:
         font = None
     box = draw.textbbox((x, y), text, font=font)
@@ -84,10 +84,11 @@ def label(draw, xy, text):
     draw.text((x, y), text, fill="white", font=font)
 
 
-def main(output, gaming=False, errors=False, background=None):
-    snap, sound, media, am = fixtures()
+def main(output, gaming=False, errors=False, background=None, scale=1, album=False, cover_path=None):
+    snap, sound, media, am = showcase_fixtures(cover_path) if album else fixtures()
+    width = blob.Panel.GAMING_WIDE if gaming or errors else 340
     with patch.object(glass, "ScreenSource", return_value=NS(frozen=False)):
-        renderer = glass.GlassRenderer(1, blob.Panel.GAMING_WIDE if gaming or errors else 340, 740)
+        renderer = glass.GlassRenderer(scale, round(width * scale), round(740 * scale))
     renderer.set_supersample(blob.Panel.SS)
     # A light/dark scene also exercises the actual per-pixel adaptive ink shader.
     hh, ww = renderer.cap.shape[:2]
@@ -129,7 +130,9 @@ def main(output, gaming=False, errors=False, background=None):
                  ("Queue / playback pending — synthetic track", False, "music", "queue", 0, False),
                  ("Queue / playback failure", True, "music", "queue", 1, False),
                  ("Sound / setup required", False, "sound", "now", 0, False)]
-    columns, cell_h = (1, 235) if gaming else (3, renderer.H + 24) if errors else (4, renderer.H + 24)
+    caption = round(24 * scale)
+    columns, cell_h = ((1, round(235 * scale)) if gaming else (3, renderer.H + caption) if errors
+                       else (4, renderer.H + caption))
     sheet_w, sheet_h = columns * renderer.W, ((len(cases) + columns - 1) // columns) * cell_h
     desk = pad = None
     if background:
@@ -139,7 +142,7 @@ def main(output, gaming=False, errors=False, background=None):
         photo = cover(Image.open(background).convert("RGB"), sheet_w + 2 * pad, sheet_h + 2 * pad)
         desk = np.asarray(photo)[..., ::-1]  # BGR, like a desktop capture
     for title, compact, page, view, scroll, conflict in cases:
-        p = RecordingPanel(1)
+        p = RecordingPanel(scale)
         p.set_compact(compact)
         p.page, p.music_view, p.am, p.tabs_t = page, view, am, 1
         if page == "blob":
@@ -176,7 +179,7 @@ def main(output, gaming=False, errors=False, background=None):
         p.draw(snap, sound, .35, False, media=media)
         renderer.set_content(p.ink, p.accent, p.pic, instant=True)
         app = blob.App.__new__(blob.App)
-        app.S, app.panel, app.springs = 1, p, blob.Springs()
+        app.S, app.panel, app.springs = scale, p, blob.Springs()
         app.attached = app.detaching = app.hover = app.pressed = app.slider_drag = None
         app.pointer_style = "system"
         lenses, viz = app.resolve(p.controls, 1, "")
@@ -199,7 +202,7 @@ def main(output, gaming=False, errors=False, background=None):
         if desk is not None:
             i = len(cards)
             ox = (i % columns) * renderer.W + pad
-            oy = (i // columns) * cell_h + 24 - (py - sp) + pad  # window row py-sp lands under the caption
+            oy = (i // columns) * cell_h + caption - (py - sp) + pad  # window row py-sp lands under the caption
             ch, cw = renderer.cap.shape[:2]
             renderer.cap[..., :3] = desk[oy + py - M:oy + py - M + ch, ox + sp - M:ox + sp - M + cw]
             renderer.cap[..., 3] = 255
@@ -221,13 +224,150 @@ def main(output, gaming=False, errors=False, background=None):
     d = ImageDraw.Draw(sheet, "RGBA")
     for i, (title, img) in enumerate(cards):
         x, y = (i % columns) * renderer.W, (i // columns) * cell_h
-        sheet.paste(img, (x, y + 24))
+        sheet.paste(img, (x, y + caption))
         if desk is None:
             d.text((x + 20, y + 8), title, fill="white")
         else:
-            label(d, (x + 20, y + 8), title)
+            label(d, (x + round(20 * scale), y + round(8 * scale)), title, scale)
     sheet.save(output)
     print(Path(output).resolve())
+
+
+SHOWCASE_ALBUM = ("Drake", "Honestly, Nevermind", [
+    "Intro", "Falling Back", "Texts Go Green", "Currents", "A Keeper", "Calling My Name", "Sticky",
+    "Massive", "Flight's Booked", "Overdrive", "Down Hill", "Tie That Binds", "Liability",
+    "Jimmy Cooks (feat. 21 Savage)"])
+
+
+def placeholder_cover(size=1200):
+    """Original abstract cover art (no third-party artwork): a warm glow on midnight blue."""
+    yy, xx = np.mgrid[:size, :size] / size
+    base = np.stack([.05 + .10 * yy, .07 + .08 * yy, .16 + .22 * (1 - xx * .5)], -1)
+    glow = np.exp(-(((xx - .62) ** 2) / .045 + ((yy - .42) ** 2) / .035))[..., None]
+    glow2 = np.exp(-(((xx - .30) ** 2) / .02 + ((yy - .72) ** 2) / .05))[..., None]
+    ring = np.exp(-((np.hypot(xx - .5, yy - .5) - .31) ** 2) / .00012)[..., None]
+    rgb = base + glow * np.array([1.0, .45, .22]) * .95 + glow2 * np.array([.55, .32, .95]) * .6 + ring * .35
+    noise = np.random.default_rng(7).normal(0, .018, rgb.shape)
+    return Image.fromarray((np.clip(rgb + noise, 0, 1) * 255).astype(np.uint8))
+
+
+def showcase_fixtures(cover_path=None, now_playing=1):
+    """Sample data for the README showcase: a real album's track list playing in Blob."""
+    snap, sound, _media, am = fixtures()
+    artist, album, tracks = SHOWCASE_ALBUM
+    art = Image.open(cover_path).convert("RGB") if cover_path else placeholder_cover()
+    media = NS(active=True, title=tracks[now_playing], artist=artist, album=album, source="Apple Music",
+               playing=True, duration=265, pos_now=lambda: 74, art=art)
+    am.queue = [dict(title=t, artist=artist, album=album, art=art) for t in tracks[now_playing + 1:]]
+    am.results = [dict(title=t, artist=artist, album=album, art=art) for t in tracks]
+    am.status = am.queue_status = ""
+    snap["sensors"] = [dict(name=n, value=v, unit="°C", temp=True) for n, v in
+                       (("CPU package", 64), ("GPU core", 58), ("NVMe SSD", 41), ("Motherboard", 38))]
+    sound.output = "Speakers (Realtek Audio)"
+    sound.spectrum = np.linspace(.85, .25, 28)
+    return snap, sound, media, am
+
+
+def render_panel(renderer, p, snap, sound, media, desk, x, y, scale, bubble=False, audio=(0, 0, 0)):
+    """Render one real panel whose top-left sits at desk (x, y); returns (image, paste origin)."""
+    p.update_width()
+    p.draw(snap, sound, .35, False, media=media)
+    renderer.set_content(p.ink, p.accent, p.pic, instant=True)
+    app = blob.App.__new__(blob.App)
+    app.S, app.panel, app.springs = scale, p, blob.Springs()
+    app.attached = app.detaching = app.hover = app.pressed = app.slider_drag = None
+    app.pointer_style = "system"
+    lenses, viz = app.resolve(p.controls, 1, "")
+    for lens in lenses:
+        lens["rect"] = tuple(v / p.SS for v in lens["rect"])
+        for key in ("r", "strength", "bevel"):
+            if key in lens:
+                lens[key] /= p.SS
+    renderer.set_lenses(lenses)
+    renderer.set_panel_shape(1 if bubble else 0)
+    renderer.set_bubble_audio(*audio)
+    renderer.set_viz([v / p.SS for v in viz] if viz else None, np.linspace(.2, .9, 28), 1)
+    width, height = p.w / p.SS, round(p.height(snap) / p.SS)
+    px, py, sp, M = renderer.panel_x(width), renderer.panel_y(height), renderer.sp, renderer.M
+    ox, oy = x - px, y - py                     # desk position of the window's top-left pixel
+    ch, cw = renderer.cap.shape[:2]
+    renderer.cap[..., :3] = desk[oy + py - M:oy + py - M + ch, ox + sp - M:ox + sp - M + cw]
+    renderer.cap[..., 3] = 255
+    renderer._bg_dirty = True
+    with patch.object(glass.user32, "UpdateLayeredWindow", return_value=True):
+        renderer.render(None, 0, 0, width, height, 1, (-.55, -.83), .35)
+    x0, x1 = px - sp, px + round(width) + sp
+    pixels = renderer.dib.arr[py - sp:py + height + sp, x0:x1].astype(np.float32)
+    behind = desk[oy + py - sp:oy + py + height + sp, ox + x0:ox + x1]
+    rgb = pixels[..., :3] + behind * (1 - pixels[..., 3:4] / 255)
+    return Image.fromarray(np.clip(rgb[..., ::-1], 0, 255).astype(np.uint8)), (x - sp, y - sp)
+
+
+def showcase(output, background, cover=None, scale=2, size=(1920, 960)):
+    """One desktop-sized hero shot: Music, Playing Next, System, Gaming and bubbles over a wallpaper."""
+    snap, sound, media, am = showcase_fixtures(cover)
+    S = scale
+    cw, chh = round(size[0] * S), round(size[1] * S)
+    pad = round(900 * S)
+    photo = cover_image(background, cw + 2 * pad, chh + 2 * pad)
+    desk = np.asarray(photo)[..., ::-1]
+    def renderer(width, height):
+        # Each renderer owns a standalone GL context and moderngl does not switch between them,
+        # so create one only after the previous renderer is finished.
+        with patch.object(glass, "ScreenSource", return_value=NS(frozen=False)):
+            r = glass.GlassRenderer(S, round(width * S), round(height * S))
+        r.set_supersample(blob.Panel.SS)
+        return r
+
+    def panel(page, view="now", compact=False, **extra):
+        p = RecordingPanel(S)
+        p.set_compact(compact)
+        p.page, p.music_view, p.am, p.tabs_t = page, view, am, 0 if page == "blob" else 1
+        p.hardware_view = "bubble" if page == "blob" and view == "bubble" else "card"
+        p.sound_view = "bubble" if page == "sound" and view == "bubble" else "card"
+        p.gaming_view = "horizontal"
+        p.hardware_mode = "balanced"
+        p.hw_note = "CPU, GPU and fan sensors come from LibreHardwareMonitor."
+        for key, value in extra.items():
+            setattr(p, key, value)
+        return p
+
+    L = lambda v: round(v * S)
+
+    def panel_height(p):
+        p.update_width()
+        p.draw(snap, sound, .35, False, media=media)
+        return round(p.height(snap) / p.SS)
+
+    # Lay everything out first (heights are known before rendering), then render per renderer.
+    music, queue, hw = panel("music"), panel("music", "queue"), panel("blob")
+    game = panel("gaming", game=dict(fps=144, frame_ms=6.94, ram_percent=48, ram_gb=7.3),
+                 tabs_open=False, tabs_t=0)
+    bubbles = [(panel("music", "bubble", compact=True), (.85, .55, .9)),
+               (panel("sound", "bubble"), (0, 0, 0)), (panel("blob", "bubble"), (0, 0, 0))]
+    top, right_x = L(170), L(1060)
+    game_y = top + panel_height(hw) + L(40)
+    bubble_y = game_y + panel_height(game) + L(40)
+
+    shots = []
+    wide = renderer(340, 740)
+    shots.append(render_panel(wide, music, snap, sound, media, desk, pad + L(250), pad + top, S))
+    shots.append(render_panel(wide, queue, snap, sound, media, desk, pad + L(640), pad + top, S))
+    shots.append(render_panel(wide, hw, snap, sound, media, desk, pad + right_x, pad + top, S))
+    for i, (p, audio) in enumerate(bubbles):
+        shots.append(render_panel(wide, p, snap, sound, media, desk, pad + right_x + L(140) * i,
+                                  pad + bubble_y, S, bubble=True, audio=audio))
+    strip = renderer(blob.Panel.GAMING_WIDE, 300)
+    shots.append(render_panel(strip, game, snap, sound, media, desk, pad + right_x, pad + game_y, S))
+    scene = Image.fromarray(np.ascontiguousarray(desk[..., ::-1]))
+    for img, (x, y) in shots:
+        scene.paste(img, (x, y))
+    scene.crop((pad, pad, pad + cw, pad + chh)).save(output, optimize=True)
+    print(Path(output).resolve())
+
+
+def cover_image(path, width, height):
+    return cover(Image.open(path).convert("RGB"), width, height)
 
 
 if __name__ == "__main__":
@@ -237,8 +377,14 @@ if __name__ == "__main__":
     parser.add_argument("--errors", action="store_true")
     parser.add_argument("--morph", action="store_true")
     parser.add_argument("--background", help="photo to use as the desktop behind the glass")
+    parser.add_argument("--scale", type=float, default=1, help="display scale, e.g. 2 for a HiDPI render")
+    parser.add_argument("--showcase", action="store_true", help="one desktop-sized hero scene (needs --background)")
+    parser.add_argument("--cover", help="album artwork for --showcase/--album (default: an original placeholder)")
+    parser.add_argument("--album", action="store_true", help="use the showcase album instead of stress-test data")
     args = parser.parse_args()
     if args.morph:
         morph_preview(args.output)
+    elif args.showcase:
+        showcase(args.output, args.background, args.cover, args.scale if args.scale != 1 else 2)
     else:
-        main(args.output, args.gaming, args.errors, args.background)
+        main(args.output, args.gaming, args.errors, args.background, args.scale, args.album, args.cover)

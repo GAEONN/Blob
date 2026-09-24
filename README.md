@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/horizontal-menu-open.png" alt="Blob's gaming strip" width="680">
+  <img src="docs/screenshots/showcase.png" alt="Blob on a Windows desktop: music player, Playing Next, hardware card, gaming strip and bubbles" width="100%">
 </p>
 
 ## What is Blob?
@@ -142,12 +142,13 @@ in Blob's Settings.
 
 ## Screenshots
 
-**Gaming strip** — regular and compact:
+**Gaming strip** — regular, with the view menu open, and compact:
 
-![Gaming strip](docs/screenshots/horizontal-regular.png)
-![Compact gaming strip](docs/screenshots/horizontal-compact.png)
+<img src="docs/screenshots/horizontal-regular.png" alt="Gaming strip" width="680">
+<img src="docs/screenshots/horizontal-menu-open.png" alt="Gaming strip with the view menu open" width="680">
+<img src="docs/screenshots/horizontal-compact.png" alt="Compact gaming strip" width="680">
 
-**Music, System, Sound and Settings** — cards, bubbles and the moving album backdrop:
+**Every view** — Music, Search, Playing Next, System, Sound and Settings:
 
 <img src="docs/screenshots/latest-music-preview-v5.png" alt="Music, System, Sound and Settings views" width="720">
 
@@ -155,7 +156,8 @@ in Blob's Settings.
 
 <img src="docs/screenshots/latest-bubble-preview.png" alt="Bubble states" width="340">
 
-<sub>Screenshots are Blob's real glass rendered with sample data over a desktop photo by
+<sub>Screenshots are Blob's real glass rendered at 2× with sample data: *Honestly, Nevermind* by Drake
+playing, shown with original placeholder cover art. Desktop photo by
 [Muriel Liu](https://unsplash.com/@muriel_1) on [Unsplash](https://unsplash.com/photos/vCp7Q2ACSQg).
 Earlier gaming-strip designs are in [docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).</sub>
 
@@ -332,7 +334,10 @@ Render the real GPU glass against a synthetic desktop for visual inspection:
 python tests/render_preview.py --output preview.png
 # the README gallery, over the same desktop photo:
 python tests/render_preview.py --background docs/screenshots/backdrop.jpg --output preview.png
-python tests/render_preview.py --gaming --background docs/screenshots/backdrop.jpg --output gaming.png
+python tests/render_preview.py --showcase --background docs/screenshots/backdrop.jpg --output showcase.png
+python tests/render_preview.py --album --scale 2 --background docs/screenshots/backdrop.jpg --output views.png
+python tests/render_preview.py --gaming --scale 2 --background docs/screenshots/backdrop.jpg --output gaming.png
+# add --cover <image> to use your own album artwork in --showcase / --album renders
 ```
 
 Key files:
