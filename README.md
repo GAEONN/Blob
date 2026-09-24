@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/showcase.png" alt="Blob on a Windows desktop: music player, Playing Next, hardware card, gaming strip and bubbles" width="100%">
+  <img src="docs/screenshots/showcase.png" alt="Blob on a Windows desktop: music player, Playing Next, calculator, hardware card, tool palette, gaming strip and bubbles" width="100%">
 </p>
 
 ## What is Blob?

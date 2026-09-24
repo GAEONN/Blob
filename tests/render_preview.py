@@ -10,7 +10,10 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+import tempfile
+
 from test_regressions import blob, fixtures, glass, RecordingPanel
+from toolset import ToolController
 
 
 def morph_preview(output):
@@ -268,10 +271,15 @@ def showcase_fixtures(cover_path=None, now_playing=1):
     return snap, sound, media, am
 
 
-def render_panel(renderer, p, snap, sound, media, desk, x, y, scale, bubble=False, audio=(0, 0, 0)):
+def render_panel(renderer, p, snap, sound, media, desk, x, y, scale, bubble=False, audio=(0, 0, 0),
+                 tools=None, palette=False):
     """Render one real panel whose top-left sits at desk (x, y); returns (image, paste origin)."""
     p.update_width()
-    p.draw(snap, sound, .35, False, media=media)
+    p.draw(snap, sound, .35, False, media=media, tools=tools)
+    # What the app tells the renderer for tool cards and the bubble's radial tool palette.
+    renderer.set_tool_card(p.tools_open and p.tool_view in ("calculator", "clipboard", "blank"))
+    renderer.set_bubble_proximity(1.0 if palette else 0.0)
+    renderer.set_tool_expansion(1.0 if palette else 0.0)
     renderer.set_content(p.ink, p.accent, p.pic, instant=True)
     app = blob.App.__new__(blob.App)
     app.S, app.panel, app.springs = scale, p, blob.Springs()
@@ -336,29 +344,41 @@ def showcase(output, background, cover=None, scale=2, size=(1920, 960)):
 
     def panel_height(p):
         p.update_width()
-        p.draw(snap, sound, .35, False, media=media)
+        p.draw(snap, sound, .35, False, media=media, tools=tools)
         return round(p.height(snap) / p.SS)
 
     # Lay everything out first (heights are known before rendering), then render per renderer.
+    tools = ToolController(Path(tempfile.mkdtemp()) / "tools.json")   # scratch state, never the user's
+    for key in ("1", "2", "8", "0", "×", "1", ".", "1", "6", "="):
+        tools.press(key)
     music, queue, hw = panel("music"), panel("music", "queue"), panel("blob")
+    calc = panel("blob", tools_open=True, tool_view="calculator", tool_size_scale=.8)
+    palette = panel("blob", "bubble", tool_reveal=1.0, anchor_side="right")
     game = panel("gaming", game=dict(fps=144, frame_ms=6.94, ram_percent=48, ram_gb=7.3),
                  tabs_open=False, tabs_t=0)
-    bubbles = [(panel("music", "bubble", compact=True), (.85, .55, .9)),
-               (panel("sound", "bubble"), (0, 0, 0)), (panel("blob", "bubble"), (0, 0, 0))]
-    top, right_x = L(170), L(1060)
-    game_y = top + panel_height(hw) + L(40)
-    bubble_y = game_y + panel_height(game) + L(40)
+    bubbles = [(panel("music", "bubble", compact=True), (.85, .55, .9)), (panel("sound", "bubble"), (0, 0, 0))]
+    # Columns: music, Playing Next, calculator, then System + tool palette over the gaming strip.
+    xs = [L(80), L(460), L(840), L(1216)]
+    heights = {k: panel_height(v) for k, v in dict(music=music, queue=queue, calc=calc, hw=hw,
+                                                  palette=palette, game=game).items()}
+    column = max(heights["hw"], heights["palette"]) + L(40) + heights["game"] + L(40) + L(98)
+    top = (chh - max(heights["music"], heights["queue"], heights["calc"], column)) // 2
+    game_y = top + max(heights["hw"], heights["palette"]) + L(40)
+    bubble_y = game_y + heights["game"] + L(40)
 
     shots = []
     wide = renderer(340, 740)
-    shots.append(render_panel(wide, music, snap, sound, media, desk, pad + L(250), pad + top, S))
-    shots.append(render_panel(wide, queue, snap, sound, media, desk, pad + L(640), pad + top, S))
-    shots.append(render_panel(wide, hw, snap, sound, media, desk, pad + right_x, pad + top, S))
+    shots.append(render_panel(wide, music, snap, sound, media, desk, pad + xs[0], pad + top, S))
+    shots.append(render_panel(wide, queue, snap, sound, media, desk, pad + xs[1], pad + top, S))
+    shots.append(render_panel(wide, calc, snap, sound, media, desk, pad + xs[2], pad + top, S, tools=tools))
+    shots.append(render_panel(wide, hw, snap, sound, media, desk, pad + xs[3], pad + top, S))
+    shots.append(render_panel(wide, palette, snap, sound, media, desk, pad + xs[3] + L(380), pad + top, S,
+                              bubble=True, palette=True))
     for i, (p, audio) in enumerate(bubbles):
-        shots.append(render_panel(wide, p, snap, sound, media, desk, pad + right_x + L(140) * i,
+        shots.append(render_panel(wide, p, snap, sound, media, desk, pad + xs[3] + L(190) + L(140) * i,
                                   pad + bubble_y, S, bubble=True, audio=audio))
     strip = renderer(blob.Panel.GAMING_WIDE, 300)
-    shots.append(render_panel(strip, game, snap, sound, media, desk, pad + right_x, pad + game_y, S))
+    shots.append(render_panel(strip, game, snap, sound, media, desk, pad + xs[3], pad + game_y, S))
     scene = Image.fromarray(np.ascontiguousarray(desk[..., ::-1]))
     for img, (x, y) in shots:
         scene.paste(img, (x, y))
