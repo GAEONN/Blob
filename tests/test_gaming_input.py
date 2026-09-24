@@ -32,6 +32,11 @@ class GamingInputTests(unittest.TestCase):
         self.u.GetWindowLongPtrW.return_value = self.base
         self.u.GetCapture.return_value = a.hwnd
         self.u.GetForegroundWindow.return_value = a.hwnd
+        # Toggling the lock saves it; never touch the real settings file here.
+        for name, kwargs in (("load_config", {"return_value": {}}), ("save_config", {})):
+            patcher = patch.object(blob.engine, name, **kwargs)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_lock_preserves_layered_topmost_and_passes_input(self):
         self.app.apply_gaming_input()
@@ -59,7 +64,9 @@ class GamingInputTests(unittest.TestCase):
         self.assertTrue(self.app.gaming_locked)
         self.assertFalse(self.app.panel.tabs_open)
 
-    def test_dual_ctrl_temporarily_enables_drag_without_unlocking(self):
+    def test_dual_ctrl_held_while_locked_never_allows_a_drag(self):
+        # Left Ctrl is crouch in many games: holding both Ctrl keys used to let
+        # in-game clicks drag the overlay. Locked is now completely locked.
         a = self.app
         a.drag, a.pos, a.captureable = None, [100, 80], False
         a.pinned, a.vel, a.last_frame = False, blob.np.zeros(2), 0
@@ -68,19 +75,13 @@ class GamingInputTests(unittest.TestCase):
 
         a.update_gaming_modifier_drag()
 
-        self.assertTrue(a.gaming_drag_active)
+        self.assertFalse(a.gaming_drag_active)
         self.assertFalse(a.gaming_unlocked)
-        self.u.SetWindowLongPtrW.assert_called_once_with(101, -20, self.base | blob.WS_EX_NOACTIVATE)
         with patch.object(blob, "cursor_pos", side_effect=[(130, 100), (170, 130)]):
-            self.assertEqual(a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0), 0)
-            self.assertEqual(a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0), 0)
-        self.assertEqual(a.pos, [140, 110])
-        self.assertTrue(a.pinned)
-        self.u.SetCapture.assert_called_once_with(101)
-
-        self.assertEqual(a.wndproc(101, blob.WM_LBUTTONUP, 0, 0), 0)
-        self.assertIsNone(a.drag)
-        self.u.ReleaseCapture.assert_called_once()
+            a.wndproc(101, blob.WM_LBUTTONDOWN, 0, 0)
+            a.wndproc(101, blob.WM_MOUSEMOVE, 0, 0)
+        self.assertEqual(a.pos, [100, 80])
+        self.u.SetCapture.assert_not_called()
 
     def test_releasing_dual_ctrl_restores_click_through(self):
         self.app.gaming_modifier_drag = True
@@ -94,31 +95,69 @@ class GamingInputTests(unittest.TestCase):
         self.u.SetWindowLongPtrW.assert_called_once_with(
             101, -20, self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE)
 
-    def test_dual_ctrl_hook_toggles_once_and_works_on_music(self):
+    def test_dual_ctrl_watcher_toggles_once_per_press_on_any_view(self):
         a = self.app
         a.panel.page = "music"
-        a.gaming_unlocked = True
-        a.hotkey_editing = False
-        a.dual_control_down = {blob.LEFT_CONTROL: False, blob.RIGHT_CONTROL: False}
-        a.dual_control_latched = False
+        keys = set()
+        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk in keys else 0
 
-        def key(vk, down):
-            info = blob.KBDLLHOOKSTRUCT(vk, 0, 0, 0, 0)
-            msg = blob.WM_KEYDOWN if down else 0x101
-            return a._keyboard_hook(0, msg, ctypes.addressof(info))
-
-        key(blob.LEFT_CONTROL, True)
+        both = a._dual_control_step(False)
+        keys.add(blob.LEFT_CONTROL)
+        both = a._dual_control_step(both)
         self.u.PostMessageW.assert_not_called()
-        key(blob.RIGHT_CONTROL, True)
+        keys.add(blob.RIGHT_CONTROL)
+        both = a._dual_control_step(both)
         self.u.PostMessageW.assert_called_once_with(101, blob.WM_APP_GAMING_LOCK, 0, 0)
-        key(blob.RIGHT_CONTROL, True)  # repeat: no second toggle
+        both = a._dual_control_step(both)   # still held: no repeat
         self.u.PostMessageW.assert_called_once()
-
-        a.wndproc(101, blob.WM_APP_GAMING_LOCK, 0, 0)
-        self.assertFalse(a.overlay_unlocked)
-        key(blob.RIGHT_CONTROL, False)
-        key(blob.RIGHT_CONTROL, True)
+        keys.discard(blob.RIGHT_CONTROL)
+        both = a._dual_control_step(both)
+        keys.add(blob.RIGHT_CONTROL)
+        a._dual_control_step(both)
         self.assertEqual(self.u.PostMessageW.call_count, 2)
+
+    def test_right_ctrl_alone_never_toggles_even_after_a_missed_key_up(self):
+        # The old hook remembered Left Ctrl as down when a game swallowed its
+        # key-up; Right Ctrl alone then unlocked the overlay mid-game.
+        a = self.app
+        a.dual_control_down = {blob.LEFT_CONTROL: True, blob.RIGHT_CONTROL: False}
+        info = blob.KBDLLHOOKSTRUCT(blob.RIGHT_CONTROL, 0, 0, 0, 0)
+        a._keyboard_hook(0, blob.WM_KEYDOWN, ctypes.addressof(info))
+        self.u.GetAsyncKeyState.side_effect = lambda vk: 0x8000 if vk == blob.RIGHT_CONTROL else 0
+        a._dual_control_step(False)
+        self.u.PostMessageW.assert_not_called()
+
+    def test_lock_is_saved_and_never_writes_during_tests_elsewhere(self):
+        a = self.app
+        with patch.object(blob.engine, "load_config", return_value={}) as load,                 patch.object(blob.engine, "save_config") as save:
+            a.gaming_unlocked = True
+            a.toggle_overlay_input()
+        self.assertFalse(a.overlay_unlocked)
+        self.assertTrue(save.call_args[0][0]["overlay_locked"])
+        load.assert_called()
+
+    def test_locked_overlay_keeps_its_spot_when_resolution_changes(self):
+        # Gaming Mode flips the monitor between 1920x1080 and 2560x1440.
+        a = self.app
+        a.pos, a.ss = [1500, 40], 1
+        a.glass = NS(panel_x=lambda w: 0)
+        a._panel_y = lambda h: 0
+        a.springs = {"width": NS(x=300), "height": NS(x=100)}
+        a.panel.w, a.panel.height, a.snap = 300, (lambda snap: 100), None
+        a.keep_panel_in_work_area = Mock()
+        rect = lambda l, t, r, b: NS(left=l, top=t, right=r, bottom=b)
+        small = (rect(0, 0, 1920, 1040), rect(0, 0, 1920, 1080))
+        big = (rect(0, 0, 2560, 1400), rect(0, 0, 2560, 1440))
+        a.gaming_unlocked = False
+        with patch.object(blob, "work_area_at", return_value=small):
+            a._lock_anchor = a._capture_lock_anchor()
+        with patch.object(blob, "work_area_at", return_value=big):
+            self.assertTrue(a.restore_lock_anchor())
+        centre = (a.pos[0] + 150, a.pos[1] + 50)
+        self.assertAlmostEqual(centre[0] / 2560, 1650 / 1920)
+        self.assertAlmostEqual(centre[1] / 1440, 90 / 1080)
+        a.gaming_unlocked = True
+        self.assertFalse(a.restore_lock_anchor())
 
     def test_lock_state_applies_to_non_gaming_views(self):
         self.u.GetWindowLongPtrW.return_value = self.base | blob.WS_EX_TRANSPARENT | blob.WS_EX_NOACTIVATE

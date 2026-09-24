@@ -2459,7 +2459,7 @@ class Panel:
             ("seg", "gview", "Gaming view", GAMING_VIEWS, self.gaming_view),
             ("note", "overlay_info", "One lock state is shared by every tab and only changes when you use the shortcut or tray command.", None, None),
             ("note", "gaming_info", self.game.get("status", "Open Gaming for FPS, frame time and system stats."), None, None),
-            ("note", "gaming_tip", f"Blob stays unlocked across tabs until you use {self.hotkey_label} to lock it. While locked it passes clicks through; in Gaming, hold the shortcut modifiers to drag temporarily.", None, None),
+            ("note", "gaming_tip", f"Blob stays unlocked across tabs until you use {self.hotkey_label} to lock it. While locked it passes every click through and cannot be moved; unlock to move it.", None, None),
             ("note", "overlay", f"{self.hotkey_label} locks or unlocks Blob in every view.", None, None),
         ]
         h = {"head": 30, "slider": 62, "seg": 58, "toggle": 40, "note": 46, "keybind": 58}
@@ -2654,7 +2654,13 @@ class App:
         self.visible, self.pinned = False, True
         self.audio_motion = AudioMotion()
         self.backdrop_started = time.perf_counter()
-        self._overlay_unlocked = True
+        # The lock is saved: a restart (or a crash mid-game) must never come
+        # back unlocked and let in-game clicks drag the overlay.
+        self._overlay_unlocked = not bool(cfg.get("overlay_locked", False))
+        saved = cfg.get("overlay_anchor")
+        self._lock_anchor = None
+        if not self._overlay_unlocked and isinstance(saved, list) and len(saved) == 4:
+            self._lock_anchor = (float(saved[0]), float(saved[1]), (int(saved[2]), int(saved[3])))
         self.gaming_modifier_drag = False
         # Edge docking is live placement state. A free drag clears it; a
         # deliberate monitor-edge drop establishes it again.
@@ -2702,6 +2708,7 @@ class App:
         self.pending_keys = None
         self._hookproc = HOOKPROC(self._keyboard_hook)
         self._hook = user32.SetWindowsHookExW(13, self._hookproc, k32.GetModuleHandleW(None), 0)
+        threading.Thread(target=self._watch_dual_control, daemon=True).start()
 
         self._wndproc = WNDPROC(self.wndproc)
         hinst = k32.GetModuleHandleW(None)
@@ -2774,7 +2781,7 @@ class App:
 
     def _panel_screen_rect(self, width=None, height=None):
         """Resolve the drawn panel, not the fixed layered-window buffer, in screen px."""
-        if (self.pos is None or not hasattr(self, "glass") or not hasattr(self, "ss") or
+        if (getattr(self, "pos", None) is None or not hasattr(self, "glass") or not hasattr(self, "ss") or
                 not hasattr(self.panel, "w")):
             return None
         width = (self.springs.get("width", self.panel.w).x / self.ss
@@ -3623,8 +3630,13 @@ class App:
         return held(LEFT_CONTROL) and held(RIGHT_CONTROL)
 
     def update_gaming_modifier_drag(self):
-        """Temporarily accept drag input while the configured shortcut modifiers are held."""
-        active = self.visible and self.gaming_locked and self.hotkey_modifiers_held()
+        """Locked is completely locked: holding the shortcut no longer allows a drag.
+
+        Left Ctrl is crouch in many games, so a hold-to-drag override let
+        ordinary play move the overlay. Unlock with Left Ctrl + Right Ctrl,
+        move it, and lock again.
+        """
+        active = False
         if active != self.gaming_modifier_drag:
             self.gaming_modifier_drag = active
             self.apply_gaming_input()
@@ -3659,12 +3671,81 @@ class App:
             return
         self._overlay_unlocked = not self.overlay_unlocked
         self.gaming_modifier_drag = False
+        self._lock_anchor = None if self.overlay_unlocked else self._capture_lock_anchor()
+        try:
+            cfg = engine.load_config()
+            cfg["overlay_locked"] = not self.overlay_unlocked
+            anchor = self._lock_anchor
+            cfg["overlay_anchor"] = ([anchor[0], anchor[1], anchor[2][0], anchor[2][1]]
+                                     if anchor else None)
+            engine.save_config(cfg)
+        except Exception as exc:
+            engine.log(f"could not save overlay lock: {exc}")
         # Expanded navigation makes edit mode obvious and provides a way out.
         if self.panel.page == "gaming":
             self.panel.tabs_open = self.overlay_unlocked
         self.apply_gaming_input()
         self.frame_dirty = True
         self.icon.update_menu()
+
+    def _capture_lock_anchor(self):
+        """Where the locked panel sits, as a fraction of its monitor.
+
+        Gaming Mode switches the monitor between 1080p/100% and 1440p/125%;
+        pixel positions change with it, so a locked overlay is restored to the
+        same relative spot instead of being refitted somewhere new.
+        """
+        rect = self._panel_screen_rect()
+        if rect is None:
+            return None
+        x, y, width, height = rect
+        cx, cy = x + width / 2, y + height / 2
+        _, mon = work_area_at(round(cx), round(cy))
+        mw, mh = max(1, mon.right - mon.left), max(1, mon.bottom - mon.top)
+        return ((cx - mon.left) / mw, (cy - mon.top) / mh, (round(cx), round(cy)))
+
+    def restore_lock_anchor(self):
+        """Put a locked panel back at its saved spot after a display change."""
+        anchor = getattr(self, "_lock_anchor", None)
+        if self.overlay_unlocked or anchor is None or self.pos is None:
+            return False
+        rect = self._panel_screen_rect()
+        if rect is None:
+            return False
+        fx, fy, old_centre = anchor
+        _, mon = work_area_at(*old_centre)
+        x, y, width, height = rect
+        target_x = mon.left + fx * (mon.right - mon.left)
+        target_y = mon.top + fy * (mon.bottom - mon.top)
+        self.pos[0] += target_x - (x + width / 2)
+        self.pos[1] += target_y - (y + height / 2)
+        self.keep_panel_in_work_area(screen_hint=(round(target_x), round(target_y)))
+        return True
+
+    def _watch_dual_control(self):
+        """Left Ctrl + Right Ctrl toggles the lock, read from live key state.
+
+        The keyboard hook kept its own copy of which Ctrl keys were down.
+        Windows drops slow hooks and games can swallow key-ups, so a missed
+        Left Ctrl release (crouch) made Right Ctrl alone unlock the overlay.
+        Polling GetAsyncKeyState cannot go stale, works while a game has
+        focus, and toggles once per press of the pair.
+        """
+        both_before = False
+        while True:
+            try:
+                both_before = self._dual_control_step(both_before)
+            except Exception:
+                pass
+            time.sleep(0.025)
+
+    def _dual_control_step(self, both_before):
+        """One poll: toggle when both Ctrl keys become held together."""
+        held = lambda vk: bool(user32.GetAsyncKeyState(vk) & 0x8000)
+        both = held(LEFT_CONTROL) and held(RIGHT_CONTROL)
+        if both and not both_before and self.visible and not self.hotkey_editing:
+            user32.PostMessageW(self.hwnd, WM_APP_GAMING_LOCK, 0, 0)
+        return both
 
     def begin_hotkey_edit(self):
         self.hotkey_editing = not self.hotkey_editing
@@ -3727,7 +3808,9 @@ class App:
         h = self.springs["height"]
         h.x = h.target
         if not self.pinned or self.pos is None:
-            cx, cy = cursor_pos()
+            anchor = None if self.overlay_unlocked else self._lock_anchor
+            # Locked: open on the saved spot's monitor and side, not the mouse's.
+            cx, cy = anchor[2] if anchor else cursor_pos()
             work, _ = work_area_at(cx, cy)
             side = "left" if cx <= (work.left + work.right) / 2 else "right"
             self.panel_side = side
@@ -3738,6 +3821,13 @@ class App:
             self.pos = [work.left if side == "left" else work.right - self.glass.W,
                         work.bottom - self.glass.H]
         self.keep_panel_in_work_area()
+        # A locked overlay reappears exactly where it was locked, even after a
+        # restart, rather than next to the mouse.
+        if not self.overlay_unlocked:
+            if self._lock_anchor is not None:
+                self.restore_lock_anchor()
+            else:
+                self._lock_anchor = self._capture_lock_anchor()
         self.last_frame = time.perf_counter()
         self.frame_dirty = True
         if self.captureable:
@@ -4776,11 +4866,13 @@ class App:
                     return 0
             if msg == WM_DPICHANGED:
                 self.sync_dpi(wp & 0xFFFF)
+                self.restore_lock_anchor()
                 return 0
             if msg in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE):
                 # Taskbar/work-area and monitor-layout changes can happen with
                 # no mouse movement. Refit the actual rendered panel at once.
                 if self.visible:
+                    self.restore_lock_anchor()
                     if not self.maintain_gaming_edge_dock():
                         self.keep_panel_in_work_area()
                     self.frame_dirty = True
@@ -5176,20 +5268,6 @@ class App:
                         if not down:
                             self.hotkey_swallow.discard(k.vkCode)
                         return 1
-                    if k.vkCode in (LEFT_CONTROL, RIGHT_CONTROL):
-                        states = getattr(self, "dual_control_down", {
-                            LEFT_CONTROL: False, RIGHT_CONTROL: False})
-                        self.dual_control_down = states
-                        states[k.vkCode] = down
-                        if down and not self.hotkey_editing and not getattr(self, "dual_control_latched", False) \
-                                and states[LEFT_CONTROL] and states[RIGHT_CONTROL]:
-                            # Post instead of mutating layered-window styles
-                            # inside the hook callback. This works even when a
-                            # game owns focus, and the latch prevents repeats.
-                            self.dual_control_latched = True
-                            user32.PostMessageW(self.hwnd, WM_APP_GAMING_LOCK, 0, 0)
-                        elif not down:
-                            self.dual_control_latched = False
                     if self.hotkey_editing:
                         if down:
                             self.hotkey_swallow.add(k.vkCode)
