@@ -246,12 +246,21 @@ class UnifiedTests(unittest.TestCase):
         for controller in controllers:
             controller.assert_called_once()
 
+    def test_shader_patch_anchors_still_exist(self):
+        # unified.py and dashboard.py patch glass.FRAG by exact text; a missing anchor is a
+        # silent no-op that would drop Dashboard's binary ink or full-view layout.
+        for anchor in ('uniform float ink_ss;',
+                       'vec2 q = vec2(pp.x, pp.y - (panel_size.y - size.y / ink_ss)) * ink_ss;',
+                       'float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);',
+                       'vec3 ink_col = mix(vec3(1.0), vec3(0.07), ink_dark);'):
+            self.assertIn(anchor, u.glass.FRAG)
+
     def test_shared_sources_match_the_current_unified_profile(self):
         import hashlib
         # Normalized shared-source hashes; works in downloaded archives without Git installed.
         expected = {
             'engine.py': 'fddf6cd47f896967851540034a6f787732f832a3ba962d50e1865d45ad7f37c3',
-            'glass.py': '8380a894dfab1a75dc45131f6b5f122783c50f65d6342c5add63528fada7f8f2',
+            'glass.py': '35c3bfc8a1cd13edc884173e39bda6be1de7d16a6e9770914789a8f6b81d8cd8',
                            'media.py': '746b402550e783cd195076795f5f9aacaa7bf6c7a30155c2f6153f144fe92807',
             'sound.py': 'cdb5fc4bd15a60f2509415de68fd6cea61e219ca8888ec078c5b92e909f874b1',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',

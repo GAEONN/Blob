@@ -672,6 +672,14 @@ void main() {
         col = mix(col, reading, coverage);
     }
 
+    // Text must contrast with the glass it sits on. Blending white to black by the scenery
+    // left mid-tone wallpapers with grey text on grey glass. Estimate that glass from a wide
+    // (~128 px) sample so a whole line usually gets one colour, and flip over a narrow band at
+    // ~0.48 luma, where white and near-black ink both reach ~4.3:1 against it.
+    float region = luma(at(p, 7.0));
+    float glass_l = mix(mix(region, 0.0, push * (1.0 - dark)), 1.0, (push + 0.08) * dark);
+    dark = smoothstep(0.47, 0.49, glass_l);
+
     // Album artwork is opaque: text must contrast with the cover, not the desktop.
     float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);
     vec3 ink_col = mix(vec3(1.0), vec3(0.07), ink_dark);
