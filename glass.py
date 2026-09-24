@@ -237,6 +237,11 @@ const vec2 TAPS[12] = vec2[](vec2(-0.326,-0.406), vec2(-0.840,-0.074), vec2(-0.6
 
 vec3 at(vec2 px, float lod) { return textureLod(bg, px / bg_size, lod).bgr; }
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+// Luma of the glass over scenery of luma r: the same dark/light lean applied to the glass below.
+float glassOver(float r, float push) {
+    float d = smoothstep(0.50, 0.66, r);
+    return mix(mix(r, 0.0, push * (1.0 - d)), 1.0, (push + 0.08) * d);
+}
 
 const float SQUIRCLE_N = 2.2;      // fitted against figma-squircle, 60 % corner smoothing
 const float SQUIRCLE_K = 1.08;     // radius factor that goes with it
@@ -677,25 +682,32 @@ void main() {
         col = mix(col, reading, coverage);
     }
 
-    // Text must contrast with the glass it sits on. Blending white to black by the scenery
-    // left mid-tone wallpapers with grey text on grey glass, and any blend band turns whole rows
-    // grey where the glass sits near the threshold. Estimate that glass across the panel's full
-    // width at this row (wide ~128 px samples), so a line of text gets one colour and a vertical
-    // wallpaper edge never splits a word; then pick pure white or near-black at ~0.48 luma (both
-    // ~4.3:1 there), antialiased over a single pixel so any boundary is a clean edge.
-    // Where the scenery here differs sharply from the row (a white window beside a dark
-    // wallpaper), follow it instead: splitting at a hard edge beats invisible text.
-    float row_l = 0.0;
+    // Text must contrast with the glass it sits on. A white-to-black blend by the scenery gave
+    // grey text on mid-tone wallpapers, so ink is pure white or near-black, chosen from the glass
+    // estimated across the panel's width at this row (a vertical wallpaper edge never splits a
+    // word), or from the scenery right here where it differs sharply (a white window beside a
+    // dark wallpaper). Between 0.44 and 0.52 luma either ink reaches >= 3.75:1, so there every
+    // row follows one panel-wide choice; lines only switch where the glass is clearly lighter
+    // or darker, never mid-line on a gentle gradient. Edges are antialiased over one pixel.
+    float row_l = 0.0, panel_l = 0.0;
     for (int k = 0; k < 5; k++) {
-        vec2 row = vec2(panel_pos.x + panel_size.x * (0.1 + 0.2 * float(k)), w.y) + cap_origin;
-        row_l += luma(at(row, 7.0)) * 0.2;
+        float fx = panel_pos.x + panel_size.x * (0.1 + 0.2 * float(k));
+        row_l += luma(at(vec2(fx, w.y) + cap_origin, 7.0)) * 0.2;
+        for (int j = 0; j < 3; j++)
+            panel_l += luma(at(vec2(fx, panel_pos.y + panel_size.y * (0.2 + 0.3 * float(j))) + cap_origin, 7.0)) / 15.0;
     }
     float here_l = luma(at(p, 6.0));
     float region = mix(row_l, here_l, smoothstep(0.12, 0.22, abs(here_l - row_l)));
-    float row_dark = smoothstep(0.50, 0.66, region);   // the tint above, evaluated for the row
-    float glass_l = mix(mix(region, 0.0, push * (1.0 - row_dark)), 1.0, (push + 0.08) * row_dark);
+    // Buttons carry their own frosted/colour tint (above); estimate it from the same row-level
+    // scenery so a label reads against the button it sits on, not the bare glass.
+    float rd = smoothstep(0.50, 0.66, region);
+    float glass_l = mix(glassOver(region, push), luma(mix(tint_dark_scene, tint_bright_scene, rd)),
+                        clamp(mix(lift, mix(lift * 1.2, 0.55 + lift, raised), rd) * 0.72, 0.0, 0.72));
+    glass_l = mix(glass_l, luma(tint * mix(1.0, 0.85, rd)), clamp(tint_a, 0.0, 1.0));
     float glass_aa = max(fwidth(glass_l), 1e-4);
-    dark = smoothstep(0.48 - glass_aa, 0.48 + glass_aa, glass_l);
+    float clearly_light = smoothstep(0.52 - glass_aa, 0.52 + glass_aa, glass_l);
+    float clearly_dark = 1.0 - smoothstep(0.44 - glass_aa, 0.44 + glass_aa, glass_l);
+    dark = mix(mix(step(0.48, glassOver(panel_l, push)), 1.0, clearly_light), 0.0, clearly_dark);
 
     // Album artwork is opaque: text must contrast with the cover, not the desktop.
     float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);
@@ -706,7 +718,7 @@ void main() {
     float halo_lod = 2.6 + log2(max(S, 1.0));
     float halo = clamp(mix(inkHaloAt(ink0, ink0_size, pp, halo_lod), inkHaloAt(ink1, ink1_size, pp, halo_lod), fade) * 2.4, 0.0, 1.0);
     float risk = 1.0 - smoothstep(0.22, 0.42, abs(luma(col) - luma(ink_col)));
-    col = mix(col, vec3(1.0) - ink_col * 0.9, halo * risk * 0.55 * (1.0 - pic.a));
+    col = mix(col, vec3(1.0) - ink_col * 0.9, halo * mix(0.45, 0.85, risk) * risk * (1.0 - pic.a));
     // Opaque covers hide desktop refraction: retain readable frosted bars above art.
     col = mix(col, ink_col, viz_coverage * pic.a * .72);
     col = mix(col, ink_col, fill * 0.85);
