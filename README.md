@@ -155,8 +155,9 @@ in Blob's Settings.
 
 <img src="docs/screenshots/latest-bubble-preview.png" alt="Bubble states" width="340">
 
-<sub>Screenshots are rendered with sample data. Earlier gaming-strip designs are in
-[docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).</sub>
+<sub>Screenshots are Blob's real glass rendered with sample data over a desktop photo by
+[Muriel Liu](https://unsplash.com/@muriel_1) on [Unsplash](https://unsplash.com/photos/vCp7Q2ACSQg).
+Earlier gaming-strip designs are in [docs/screenshots/gaming-layouts](docs/screenshots/gaming-layouts).</sub>
 
 ## Feature guide
 
@@ -329,6 +330,9 @@ Render the real GPU glass against a synthetic desktop for visual inspection:
 
 ```powershell
 python tests/render_preview.py --output preview.png
+# the README gallery, over the same desktop photo:
+python tests/render_preview.py --background docs/screenshots/backdrop.jpg --output preview.png
+python tests/render_preview.py --gaming --background docs/screenshots/backdrop.jpg --output gaming.png
 ```
 
 Key files:

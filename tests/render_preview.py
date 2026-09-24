@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from test_regressions import blob, fixtures, glass, RecordingPanel
 
@@ -63,7 +63,28 @@ def morph_preview(output):
     print(Path(output).resolve())
 
 
-def main(output, gaming=False, errors=False):
+def cover(image, width, height):
+    """Scale and centre-crop an image so it fills width x height (CSS object-fit: cover)."""
+    scale = max(width / image.width, height / image.height)
+    size = (max(width, round(image.width * scale)), max(height, round(image.height * scale)))
+    image = image.resize(size, Image.LANCZOS)
+    left, top = (size[0] - width) // 2, (size[1] - height) // 2
+    return image.crop((left, top, left + width, top + height))
+
+
+def label(draw, xy, text):
+    """Caption that stays legible over a photo."""
+    x, y = xy
+    try:
+        font = ImageFont.truetype("segoeui.ttf", 12)
+    except OSError:
+        font = None
+    box = draw.textbbox((x, y), text, font=font)
+    draw.rounded_rectangle((box[0] - 6, box[1] - 4, box[2] + 6, box[3] + 4), 6, fill=(0, 0, 0, 150))
+    draw.text((x, y), text, fill="white", font=font)
+
+
+def main(output, gaming=False, errors=False, background=None):
     snap, sound, media, am = fixtures()
     with patch.object(glass, "ScreenSource", return_value=NS(frozen=False)):
         renderer = glass.GlassRenderer(1, blob.Panel.GAMING_WIDE if gaming or errors else 340, 740)
@@ -108,6 +129,15 @@ def main(output, gaming=False, errors=False):
                  ("Queue / playback pending — synthetic track", False, "music", "queue", 0, False),
                  ("Queue / playback failure", True, "music", "queue", 1, False),
                  ("Sound / setup required", False, "sound", "now", 0, False)]
+    columns, cell_h = (1, 235) if gaming else (3, renderer.H + 24) if errors else (4, renderer.H + 24)
+    sheet_w, sheet_h = columns * renderer.W, ((len(cases) + columns - 1) // columns) * cell_h
+    desk = pad = None
+    if background:
+        # One continuous "desktop" behind the whole sheet: every card refracts, and is composited
+        # over, the part of the photo it sits on. The padding covers the refraction margin.
+        pad = renderer.H + renderer.M
+        photo = cover(Image.open(background).convert("RGB"), sheet_w + 2 * pad, sheet_h + 2 * pad)
+        desk = np.asarray(photo)[..., ::-1]  # BGR, like a desktop capture
     for title, compact, page, view, scroll, conflict in cases:
         p = RecordingPanel(1)
         p.set_compact(compact)
@@ -165,23 +195,37 @@ def main(output, gaming=False, errors=False):
         renderer.set_bubble_audio(*audio)
         renderer.set_viz([v / p.SS for v in viz] if viz else None, np.linspace(.2, .9, 28), 1)
         height = round(p.height(snap) / p.SS)
+        py, sp, M = renderer.panel_y(height), renderer.sp, renderer.M
+        if desk is not None:
+            i = len(cards)
+            ox = (i % columns) * renderer.W + pad
+            oy = (i // columns) * cell_h + 24 - (py - sp) + pad  # window row py-sp lands under the caption
+            ch, cw = renderer.cap.shape[:2]
+            renderer.cap[..., :3] = desk[oy + py - M:oy + py - M + ch, ox + sp - M:ox + sp - M + cw]
+            renderer.cap[..., 3] = 255
+            renderer._bg_dirty = True
         with patch.object(glass.user32, "UpdateLayeredWindow", return_value=True):
             renderer.render(None, 0, 0, p.w / p.SS, height, 1, (-.55, -.83), .35)
-        py, sp = renderer.panel_y(height), renderer.sp
         pixels = renderer.dib.arr[py - sp:py + height + sp].astype(np.float32)
-        rgb = pixels[..., :3] + 30 * (1 - pixels[..., 3:4] / 255)
+        behind = 30 if desk is None else desk[oy + py - sp:oy + py + height + sp, ox:ox + renderer.W]
+        rgb = pixels[..., :3] + behind * (1 - pixels[..., 3:4] / 255)
         img = Image.fromarray(np.clip(rgb[..., ::-1], 0, 255).astype(np.uint8))
         # Individual native-scale captures keep review text legible, unlike a giant contact sheet.
         destination = Path(output).parent / (Path(output).stem + "-" + str(len(cards)) + ".tmp.png")
         img.save(destination)
         cards.append((title, img))
-    columns, cell_h = (1, 235) if gaming else (3, renderer.H + 24) if errors else (4, renderer.H + 24)
-    sheet = Image.new("RGB", (columns * renderer.W, ((len(cards) + columns - 1) // columns) * cell_h), (30, 30, 30))
-    d = ImageDraw.Draw(sheet)
+    if desk is None:
+        sheet = Image.new("RGB", (sheet_w, sheet_h), (30, 30, 30))
+    else:
+        sheet = Image.fromarray(np.ascontiguousarray(desk[pad:pad + sheet_h, pad:pad + sheet_w, ::-1]))
+    d = ImageDraw.Draw(sheet, "RGBA")
     for i, (title, img) in enumerate(cards):
         x, y = (i % columns) * renderer.W, (i // columns) * cell_h
-        d.text((x + 20, y + 8), title, fill="white")
         sheet.paste(img, (x, y + 24))
+        if desk is None:
+            d.text((x + 20, y + 8), title, fill="white")
+        else:
+            label(d, (x + 20, y + 8), title)
     sheet.save(output)
     print(Path(output).resolve())
 
@@ -192,8 +236,9 @@ if __name__ == "__main__":
     parser.add_argument("--gaming", action="store_true")
     parser.add_argument("--errors", action="store_true")
     parser.add_argument("--morph", action="store_true")
+    parser.add_argument("--background", help="photo to use as the desktop behind the glass")
     args = parser.parse_args()
     if args.morph:
         morph_preview(args.output)
     else:
-        main(args.output, args.gaming, args.errors)
+        main(args.output, args.gaming, args.errors, args.background)
