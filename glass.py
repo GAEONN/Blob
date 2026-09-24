@@ -173,6 +173,28 @@ def shape_mask(w, h, r, smoothing=0.6):
 # and morph every frame at no CPU cost.
 MAX_LENSES = 96
 
+BLUR_FRAG = """
+#version 330
+// One direction of a separable Gaussian at quarter resolution. Real frosted
+// glass is a smooth blur; scattered taps from a coarse mip read as blotches.
+uniform sampler2D src;
+uniform vec2 step_uv;      // one output texel along the blur direction
+uniform float src_lod;     // 2.0 reads the capture's quarter-size mip level
+uniform vec2 out_size;
+out vec4 frag;
+void main() {
+    vec2 uv = gl_FragCoord.xy / out_size;
+    vec4 acc = vec4(0.0);
+    float total = 0.0;
+    for (int i = -10; i <= 10; i++) {
+        float w = exp(-float(i * i) / 50.0);          // sigma 5 texels = 20 px
+        acc += w * textureLod(src, uv + step_uv * float(i), src_lod);
+        total += w;
+    }
+    frag = acc / total;
+}
+"""
+
 VERT = """
 #version 330
 in vec2 pos;
@@ -202,7 +224,8 @@ uniform float bubble_proximity;         // 0 idle, 1 cursor is inside the bubble
 uniform float tool_expansion;           // expanded satellite canvas; keeps the base bubble fixed
 uniform float tool_card;                // top-anchored calculator with strict panel clipping
 uniform vec4 magnifier_rect;            // clear reading aperture in panel pixels
-uniform float scene_busy;               // 0 calm wallpaper .. 1 text-heavy windows behind the panel
+uniform sampler2D bgblur;               // Gaussian-blurred capture, quarter size
+uniform sampler2D busy_map;             // 0 calm wallpaper .. 1 text-heavy windows, per area of the panel
 uniform float magnifier_zoom;           // zero disables; positive values magnify live desktop
 uniform vec4 backdrop_motion;          // scale, x drift, y drift, rotation
 uniform float backdrop_time;
@@ -627,19 +650,31 @@ void main() {
     // fine detail behind the whole panel and blur harder when it is busy; calm
     // wallpapers stay clear. One panel-wide value keeps the frost even: a
     // per-pixel estimate flickers along glyph edges and costs every pixel.
-    float busy = scene_busy;   // measured once per frame on the CPU and eased over time
+    // A coarse map measured on the CPU per capture, eased over time and read
+    // with linear filtering, so frost follows a busy window smoothly.
+    float busy = texture(busy_map, clamp(pp / panel_size, 0.0, 1.0)).r;
     float frost_amt = min(max(max(frost, global_frost), busy * 0.96), mix(0.82, 0.96, busy));
     vec3 col = clear;
     if (frost_amt > 0.001) {
-        float rad = mix(mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S, 20.0 * S, busy);
-        float lod = mix(0.85 + 1.10 * glassiness, 3.4, busy);
+        float rad = mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S;
+        float lod = 0.85 + 1.10 * glassiness;
         vec3 acc = vec3(0.0);
         int tap_count = frost_amt > 0.42 ? 12 : 6;
         for (int k = 0; k < 12; k++) {
             if (k >= tap_count) break;
             acc += at(p + d + TAPS[k] * rad, lod);
         }
-        col = mix(clear, acc / float(tap_count), frost_amt);
+        vec3 frosted = acc / float(tap_count);
+        if (busy > 0.001) {
+            // Busy scenery: the smooth Gaussian, with its black/white extremes
+            // drawn toward the area's average so text-heavy windows become a
+            // gentle, even haze instead of bright and dark blotches.
+            vec3 smooth_bg = textureLod(bgblur, (p + d) / bg_size, 0.0).bgr;
+            vec3 mean_bg = at(p, 7.5);
+            smooth_bg = mix(smooth_bg, mean_bg, 0.35);
+            frosted = mix(frosted, smooth_bg, busy);
+        }
+        col = mix(clear, frosted, frost_amt);
     }
     float l = luma(col);
     col = mix(vec3(l), col, 1.06);
@@ -647,7 +682,7 @@ void main() {
     // text colour follows the scenery behind each spot; the glass leans away from the ink
     float local = luma(at(p, 4.5));
     float dark = smoothstep(0.50, 0.66, local);
-    float push = 0.10 + 0.32 * glassiness + 0.12 * busy;   // busy scenery: a firmer backing
+    float push = 0.10 + 0.32 * glassiness;
     col = mix(col, vec3(0.0), push * (1.0 - dark));
     col = mix(col, vec3(1.0), (push + 0.08) * dark);
     col = mix(col, mix(ambient.rgb, ambient2, clamp(pp.y / panel_size.y, 0.0, 1.0)), ambient.a);
@@ -857,6 +892,16 @@ class GlassRenderer:
         self.bg.build_mipmaps()
         self.bg.filter = (self.ctx.LINEAR_MIPMAP_LINEAR, self.ctx.LINEAR)
         self.bg.repeat_x = self.bg.repeat_y = False
+        blur_size = (max(1, self.cap.shape[1] // 4), max(1, self.cap.shape[0] // 4))
+        self.blur_prog = self.ctx.program(vertex_shader=VERT, fragment_shader=BLUR_FRAG)
+        self.blur_vao = self.ctx.vertex_array(self.blur_prog, [(vbo, "2f", "pos")])
+        self.blur_tex = [self.ctx.texture(blur_size, 4, dtype="f1") for _ in range(2)]
+        for tex in self.blur_tex:
+            tex.filter = (self.ctx.LINEAR, self.ctx.LINEAR)
+            tex.repeat_x = tex.repeat_y = False
+        self.blur_fbo = [self.ctx.framebuffer(color_attachments=[tex]) for tex in self.blur_tex]
+        self.blur_prog["out_size"].value = (float(blur_size[0]), float(blur_size[1]))
+        self._blur_dirty = True
         self.inks = [None, None]
         self.accs = [None, None]
         self.pics = [None, None]
@@ -876,7 +921,7 @@ class GlassRenderer:
         # stride when the panel is narrower than the fixed window.
         self._readback = np.empty(self.W * self.H * 4, dtype=np.uint8)
         units = {"bg": 0, "ink0": 1, "ink1": 2, "acc0": 3, "acc1": 4,
-                 "pic0": 5, "pic1": 6}
+                 "pic0": 5, "pic1": 6, "bgblur": 9, "busy_map": 10}
         for name, unit in units.items():
             self.prog[name].value = unit
         self.prog["bg_size"].value = (self.cap.shape[1], self.cap.shape[0])
@@ -888,8 +933,10 @@ class GlassRenderer:
         self.prog["bubble_time"].value = 0.0
         self.prog["bubble_proximity"].value = 0.0
         self.prog["tool_expansion"].value = 0.0
-        self.prog["scene_busy"].value = 0.0
-        self._busy, self._busy_target, self._busy_t = 0.0, 0.0, time.perf_counter()
+        self.busy_tex = None
+        self._busy = self._busy_target = np.zeros((1, 1), np.float32)
+        self._busy_t = time.perf_counter()
+        self._upload_busy(self._busy)
         self.set_tool_card(False)
         self.set_magnifier(None)
         self.prog["backdrop_motion"].value = (1.0, 0.0, 0.0, 0.0)
@@ -1089,22 +1136,60 @@ class GlassRenderer:
         self.stats["capture"] = time.perf_counter() - tb
         return force or moved or changed
 
+    def _blur_background(self):
+        """Two-pass Gaussian of the capture into ``blur_tex[1]`` (~0.2 ms on the GPU).
+
+        Only runs while busy scenery needs it and only when the capture changed.
+        """
+        size = self.blur_tex[0].size
+        bp = self.blur_prog
+        self.blur_fbo[0].use()
+        self.bg.use(0)
+        bp["src"].value = 0
+        bp["src_lod"].value = 2.0
+        bp["step_uv"].value = (1.0 / size[0], 0.0)
+        self.blur_vao.render(mode=self.ctx.TRIANGLES)
+        self.blur_fbo[1].use()
+        self.blur_tex[0].use(0)
+        bp["src_lod"].value = 0.0
+        bp["step_uv"].value = (0.0, 1.0 / size[1])
+        self.blur_vao.render(mode=self.ctx.TRIANGLES)
+        self._blur_dirty = False
+
     @staticmethod
     def scene_busy(cap, x, y, w, h):
-        """How much fine detail (text, UI edges) is behind the panel, 0..1.
+        """Map of fine detail (text, UI edges) behind the panel, 0..1 per ~32 px cell.
 
         A strided sample of the capture: each 4-px sample is compared with the
-        mean of its 32-px block. Cheap enough to run on every new capture.
+        mean of its 32-px cell. The map is widened by one cell and softened so
+        frost starts just before a busy window's edge. ~0.5 ms per capture.
         """
         region = cap[max(0, y):max(0, y) + max(0, h):4, max(0, x):max(0, x) + max(0, w):4, :3]
         rows, cols = (region.shape[0] // 8) * 8, (region.shape[1] // 8) * 8
         if rows < 8 or cols < 8:
-            return 0.0
+            return np.zeros((1, 1), np.float32)
         lum = region[:rows, :cols].astype(np.float32) @ np.array([0.0722, 0.7152, 0.2126], np.float32) / 255.0
-        blocks = lum.reshape(rows // 8, 8, cols // 8, 8)
-        detail = float(np.abs(blocks - blocks.mean(axis=(1, 3), keepdims=True)).mean())
-        t = min(1.0, max(0.0, (detail - BUSY_CALM) / (BUSY_FULL - BUSY_CALM)))
-        return t * t * (3.0 - 2.0 * t)
+        cells = lum.reshape(rows // 8, 8, cols // 8, 8)
+        detail = np.abs(cells - cells.mean(axis=(1, 3), keepdims=True)).mean(axis=(1, 3))
+        t = np.clip((detail - BUSY_CALM) / (BUSY_FULL - BUSY_CALM), 0.0, 1.0)
+        t = t * t * (3.0 - 2.0 * t)
+        pad = np.pad(t, 1, mode="edge")
+        grown = np.max([pad[i:i + t.shape[0], j:j + t.shape[1]] for i in range(3) for j in range(3)], axis=0)
+        pad = np.pad(grown, 1, mode="edge")
+        soft = np.mean([pad[i:i + t.shape[0], j:j + t.shape[1]] for i in range(3) for j in range(3)], axis=0)
+        return soft.astype(np.float32)
+
+    def _upload_busy(self, busy):
+        """Upload the eased busy map (row 0 = top, like the capture and ``pp``)."""
+        data = np.ascontiguousarray(busy, np.float32)
+        size = (data.shape[1], data.shape[0])
+        if self.busy_tex is None or self.busy_tex.size != size:
+            if self.busy_tex is not None:
+                self.busy_tex.release()
+            self.busy_tex = self.ctx.texture(size, 1, dtype="f4")
+            self.busy_tex.filter = (self.ctx.LINEAR, self.ctx.LINEAR)
+            self.busy_tex.repeat_x = self.busy_tex.repeat_y = False
+        self.busy_tex.write(data.tobytes())
 
     def render(self, hwnd, win_x, win_y, panel_w, panel_h, fade, light, glassiness, panel_y=None):
         win_x, win_y = int(round(win_x)), int(round(win_y))
@@ -1133,8 +1218,12 @@ class GlassRenderer:
             self.bg.write(cap[:ch], viewport=(0, 0, cw, ch))
             self.bg.build_mipmaps()
             self._bg_dirty = False
+            self._blur_dirty = True
+        if self._blur_dirty and max(float(self._busy_target.max()), float(self._busy.max())) > 0.002:
+            self._blur_background()
             self._bg_uploaded = (cw, ch)
         self.bg.use(0)
+        self.blur_tex[1].use(9)
         self.inks[0].use(1)
         self.inks[1].use(2)
         self.accs[0].use(3)
@@ -1155,8 +1244,12 @@ class GlassRenderer:
         now = time.perf_counter()
         step = min(1.0, (now - self._busy_t) * 5.0)
         self._busy_t = now
-        self._busy += (self._busy_target - self._busy) * step
-        pr["scene_busy"].value = float(self._busy)
+        if self._busy.shape != self._busy_target.shape:
+            self._busy = self._busy_target.copy()   # panel resized: no stale cells to ease from
+        elif step > 0:
+            self._busy = self._busy + (self._busy_target - self._busy) * step
+        self._upload_busy(self._busy)
+        self.busy_tex.use(10)
         self.fbo.use()
         # Don't shade the tall unused portion of the fixed window buffer, especially
         # when showing the short Gaming strip.
