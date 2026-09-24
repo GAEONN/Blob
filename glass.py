@@ -1246,9 +1246,10 @@ class GlassRenderer:
         self._busy_t = now
         if self._busy.shape != self._busy_target.shape:
             self._busy = self._busy_target.copy()   # panel resized: no stale cells to ease from
-        elif step > 0:
+            self._upload_busy(self._busy)
+        elif step > 0 and float(np.abs(self._busy_target - self._busy).max()) > 1e-3:
             self._busy = self._busy + (self._busy_target - self._busy) * step
-        self._upload_busy(self._busy)
+            self._upload_busy(self._busy)   # settled maps are not re-uploaded
         self.busy_tex.use(10)
         self.fbo.use()
         # Don't shade the tall unused portion of the fixed window buffer, especially
