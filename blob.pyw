@@ -544,7 +544,7 @@ class Panel:
     MAGNIFIER_W, MAGNIFIER_H = 324, 324
     # Transparent canvas for concentric arc tools around the unchanged bubble.
     TOOL_PALETTE_W, TOOL_PALETTE_H = 220, 210
-    GAMING_CARD_H = 420
+    GAMING_CARD_W, GAMING_CARD_H = 300, 144
     RADIUS = 34     # the pane's corner; anything inset by p gets RADIUS - p (concentric radii)
     SS = 2          # content is drawn at 2x and filtered down on the GPU
     DETAIL_ROWS = 8  # keep large sensor inventories inside the renderer; scroll the rest
@@ -616,6 +616,8 @@ class Panel:
     def update_width(self):
         if self.tools_open:
             width = self.MAGNIFIER_W if self.tool_view == "magnifier" else self.TOOL_W
+            if self.tool_view == "blank" and self.gaming_toggle:
+                width = self.GAMING_CARD_W
             if self.tool_view in ("calculator", "clipboard", "blank"):
                 width *= self.tool_size_scale
         elif self.tool_reveal > .06 and self.tool_palette_available():
@@ -786,7 +788,7 @@ class Panel:
     def tool_card_height(self):
         """The calculator and Clipboard share one monitor-safe card contract."""
         if self.tool_view == "blank" and self.gaming_toggle:
-            return self.GAMING_CARD_H
+            return self.GAMING_CARD_H + (30 if self.gaming_toggle.error else 0)
         return self.calculator_height() if self.tool_view == "calculator" else self.TOOL_H
 
     def tool_header_layout(self, leading=True):
@@ -1857,39 +1859,30 @@ class Panel:
         self.di.line((cx, cy-arm, cx, cy+arm), fill=205, width=width)
 
     def _gaming_mode_card(self, gm):
-        """Admin-only: one switch for this PC's GamingModeToggle scheduled task."""
+        """Admin-only: one compact switch for this PC's GamingModeToggle scheduled task."""
         S, W = self.S, self.w
         header = self.tool_header_layout(leading=True)
-        self.label(header["leading"], 36*S, "\uE7FC", 17, a=245, anchor="mm", icon=True)
+        self.label(header["leading"], 36*S, "", 17, a=245, anchor="mm", icon=True)
         self.label(header["title"], 36*S, "Gaming Mode", 16, "Semibold Text", 245, header["title_anchor"])
-        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "\uE73F", 12, always=True)
-        self.glass_button("tool:close", header["close"], 36*S, 15*S, "\uE711", 12, always=True)
+        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "", 12, always=True)
+        self.glass_button("tool:close", header["close"], 36*S, 15*S, "", 12, always=True)
         busy, shown_on = gm.busy, gm.shown_on
-        row = (24*S, 76*S, W-24*S, 156*S)
-        self.static(row, 26*S, strength=4*S, bevel=15*S, rim=.54,
+        self.static((18*S, 66*S, W-18*S, 126*S), 30*S, strength=4*S, bevel=15*S, rim=.54,
                     frost=max(.22, self.tool_glossiness-.46), lift=.10, raised=.72)
-        self.label(46*S, 104*S, gm.status_text(), 17, "Semibold Text", 245, "lm")
-        hint = "Wait about 10 seconds" if busy else "Tap to switch on" if not shown_on else "Tap to go back to normal"
-        self.label(46*S, 130*S, hint, 12, "Regular", 190, "lm")
-        box = (W-94*S, 102*S, W-46*S, 130*S)
+        status = gm.status_text()
+        if gm.error:
+            status = "Task not installed"
+        self.label(38*S, 96*S, status, 16, "Semibold Text", 170 if busy else 245, "lm")
+        box = (W-86*S, 82*S, W-38*S, 110*S)
         # While the task runs the switch sits at its target but leaves the hit
         # map, so a second click cannot start another toggle mid-switch.
         if not busy:
             self.rects["toggle:gamingmode"] = box
         self.controls.append(("toggle", "gamingmode", box, shown_on))
-        y = 186*S
-        self.label(28*S, y, "When on" if shown_on else "When off", 12, "Semibold Text", 200, "lm")
-        y += 26*S
-        for line in admin_gaming.DESCRIPTION[bool(shown_on)]:
-            for part in self.wrap(line, 13, "Regular", W - 76*S):
-                self.label(32*S, y, "\u2022", 13, "Regular", 170, "lm")
-                self.label(48*S, y, part, 13, "Regular", 215, "lm")
-                y += 22*S
         if gm.error:
-            y += 14*S
-            for part in self.wrap(gm.error, 12, "Semibold Text", W - 56*S)[:4]:
-                self.label(28*S, y, part, 12, "Semibold Text", 235, "lm")
-                y += 19*S
+            hint = ("Ask Claude to set it up" if gm.error == admin_gaming.NOT_INSTALLED
+                    else self.wrap(gm.error, 11, "Regular", W - 44*S)[0])
+            self.label(W/2, 146*S, hint, 12, "Regular", 225, "mm")
 
     @property
     def magnifier_active(self):
