@@ -4144,7 +4144,7 @@ class App:
             self._clipboard_poll_at = now + .12
             if self.clipboard.poll():
                 self.draw_content()
-        gm = self.panel.gaming_toggle
+        gm = getattr(self.panel, "gaming_toggle", None)
         if gm and gm.poll() and self.panel.tools_open and self.panel.tool_view == "blank":
             self.draw_content()
         if self._update_tabs_side():
