@@ -202,6 +202,7 @@ uniform float bubble_proximity;         // 0 idle, 1 cursor is inside the bubble
 uniform float tool_expansion;           // expanded satellite canvas; keeps the base bubble fixed
 uniform float tool_card;                // top-anchored calculator with strict panel clipping
 uniform vec4 magnifier_rect;            // clear reading aperture in panel pixels
+uniform float scene_busy;               // 0 calm wallpaper .. 1 text-heavy windows behind the panel
 uniform float magnifier_zoom;           // zero disables; positive values magnify live desktop
 uniform vec4 backdrop_motion;          // scale, x drift, y drift, rotation
 uniform float backdrop_time;
@@ -623,22 +624,15 @@ void main() {
     float global_frost = smoothstep(0.16, 0.88, glassiness) * 0.72;
     // Busy scenery (windows full of text, mixed black and white UI) shows through
     // light frost as sharp shapes that compete with Blob's own words. Measure the
-    // fine detail behind the whole panel (sharp minus soft on a 4x4 grid) and blur
-    // harder when it is busy; calm wallpapers stay clear. One panel-wide value
-    // keeps the frost even: a per-pixel estimate flickers along glyph edges.
-    float busy = 0.0;
-    for (int k = 0; k < 4; k++) {
-        for (int j = 0; j < 4; j++) {
-            vec2 q = panel_pos + cap_origin + panel_size * vec2(0.125 + 0.25 * float(k), 0.125 + 0.25 * float(j));
-            busy += abs(luma(at(q, 2.0)) - luma(at(q, 5.0)));
-        }
-    }
-    busy = smoothstep(0.03, 0.10, busy / 16.0);
+    // fine detail behind the whole panel and blur harder when it is busy; calm
+    // wallpapers stay clear. One panel-wide value keeps the frost even: a
+    // per-pixel estimate flickers along glyph edges and costs every pixel.
+    float busy = scene_busy;   // measured once per frame on the CPU and eased over time
     float frost_amt = min(max(max(frost, global_frost), busy * 0.96), mix(0.82, 0.96, busy));
     vec3 col = clear;
     if (frost_amt > 0.001) {
-        float rad = mix(mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S, 22.0 * S, busy);
-        float lod = mix(0.85 + 1.10 * glassiness, 5.2, busy);
+        float rad = mix(mix(5.0, 3.0 + 8.0 * glassiness, frost > glassiness * 0.9 ? 0.0 : 1.0) * S, 20.0 * S, busy);
+        float lod = mix(0.85 + 1.10 * glassiness, 3.4, busy);
         vec3 acc = vec3(0.0);
         int tap_count = frost_amt > 0.42 ? 12 : 6;
         for (int k = 0; k < 12; k++) {
@@ -747,6 +741,11 @@ void main() {
     frag = vec4(col.b, col.g, col.r, alpha);   // BGRA, premultiplied — ready for the DIB
 }
 """
+
+
+# Mean |fine - block mean| luma of the scenery behind the panel: at or below
+# BUSY_CALM the glass keeps its normal frost, at BUSY_FULL it is fully backed.
+BUSY_CALM, BUSY_FULL = 0.02, 0.06
 
 
 class ScreenSource:
@@ -889,6 +888,8 @@ class GlassRenderer:
         self.prog["bubble_time"].value = 0.0
         self.prog["bubble_proximity"].value = 0.0
         self.prog["tool_expansion"].value = 0.0
+        self.prog["scene_busy"].value = 0.0
+        self._busy, self._busy_target, self._busy_t = 0.0, 0.0, time.perf_counter()
         self.set_tool_card(False)
         self.set_magnifier(None)
         self.prog["backdrop_motion"].value = (1.0, 0.0, 0.0, 0.0)
@@ -1088,6 +1089,23 @@ class GlassRenderer:
         self.stats["capture"] = time.perf_counter() - tb
         return force or moved or changed
 
+    @staticmethod
+    def scene_busy(cap, x, y, w, h):
+        """How much fine detail (text, UI edges) is behind the panel, 0..1.
+
+        A strided sample of the capture: each 4-px sample is compared with the
+        mean of its 32-px block. Cheap enough to run on every new capture.
+        """
+        region = cap[max(0, y):max(0, y) + max(0, h):4, max(0, x):max(0, x) + max(0, w):4, :3]
+        rows, cols = (region.shape[0] // 8) * 8, (region.shape[1] // 8) * 8
+        if rows < 8 or cols < 8:
+            return 0.0
+        lum = region[:rows, :cols].astype(np.float32) @ np.array([0.0722, 0.7152, 0.2126], np.float32) / 255.0
+        blocks = lum.reshape(rows // 8, 8, cols // 8, 8)
+        detail = float(np.abs(blocks - blocks.mean(axis=(1, 3), keepdims=True)).mean())
+        t = min(1.0, max(0.0, (detail - BUSY_CALM) / (BUSY_FULL - BUSY_CALM)))
+        return t * t * (3.0 - 2.0 * t)
+
     def render(self, hwnd, win_x, win_y, panel_w, panel_h, fade, light, glassiness, panel_y=None):
         win_x, win_y = int(round(win_x)), int(round(win_y))
         S, sp, M = self.S, self.sp, self.M
@@ -1111,6 +1129,7 @@ class GlassRenderer:
         ch, cw = h + 2 * M, cap.shape[1]
         t0 = time.perf_counter()
         if self._bg_dirty or self._bg_uploaded != (cw, ch):
+            self._busy_target = self.scene_busy(cap, px + M - sp, M, pw, h)
             self.bg.write(cap[:ch], viewport=(0, 0, cw, ch))
             self.bg.build_mipmaps()
             self._bg_dirty = False
@@ -1131,6 +1150,13 @@ class GlassRenderer:
         pr["panel_size"].value = (float(pw), float(h))
         pr["light"].value = tuple(float(v) for v in light)
         pr["glassiness"].value = float(glassiness)
+        # Ease the busy estimate so dragging across windows fades the frost in
+        # and out instead of popping it frame to frame.
+        now = time.perf_counter()
+        step = min(1.0, (now - self._busy_t) * 5.0)
+        self._busy_t = now
+        self._busy += (self._busy_target - self._busy) * step
+        pr["scene_busy"].value = float(self._busy)
         self.fbo.use()
         # Don't shade the tall unused portion of the fixed window buffer, especially
         # when showing the short Gaming strip.
