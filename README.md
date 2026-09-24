@@ -142,19 +142,16 @@ in Blob's Settings.
 
 ## Screenshots
 
+**Every view**, section by section in tab order: System, Sound, Music, Music library, Gaming,
+Settings and Tools:
+
+<img src="docs/screenshots/gallery.jpg" alt="Every Blob view, one row per section: System, Sound, Music, Music library, Gaming, Settings and Tools" width="100%">
+
 **Gaming strip** — regular, with the view menu open, and compact:
 
 <img src="docs/screenshots/horizontal-regular.png" alt="Gaming strip" width="680">
 <img src="docs/screenshots/horizontal-menu-open.png" alt="Gaming strip with the view menu open" width="680">
 <img src="docs/screenshots/horizontal-compact.png" alt="Compact gaming strip" width="680">
-
-**Every view** — Music, Search, Playing Next, System, Sound and Settings:
-
-<img src="docs/screenshots/latest-music-preview-v5.png" alt="Music, System, Sound and Settings views" width="720">
-
-**Bubble states** — the gaming strip beside Blob's bubbles:
-
-<img src="docs/screenshots/latest-bubble-preview.png" alt="Bubble states" width="340">
 
 <sub>Screenshots are Blob's real glass rendered at 2× with sample data: *Honestly, Nevermind* by Drake
 playing, shown with original placeholder cover art. Desktop photo by
@@ -335,9 +332,9 @@ python tests/render_preview.py --output preview.png
 # the README gallery, over the same desktop photo:
 python tests/render_preview.py --background docs/screenshots/backdrop.jpg --output preview.png
 python tests/render_preview.py --showcase --background docs/screenshots/backdrop.jpg --output showcase.png
-python tests/render_preview.py --album --scale 2 --background docs/screenshots/backdrop.jpg --output views.png
+python tests/render_preview.py --gallery --background docs/screenshots/backdrop.jpg --output gallery.jpg
 python tests/render_preview.py --gaming --scale 2 --background docs/screenshots/backdrop.jpg --output gaming.png
-# add --cover <image> to use your own album artwork in --showcase / --album renders
+# add --cover <image> to use your own album artwork in --showcase / --gallery / --album renders
 ```
 
 Key files:

@@ -10,10 +10,11 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+import copy
 import tempfile
 
 from test_regressions import blob, fixtures, glass, RecordingPanel
-from toolset import ToolController
+from toolset import ClipboardController, ToolController
 
 
 def morph_preview(output):
@@ -272,10 +273,10 @@ def showcase_fixtures(cover_path=None, now_playing=1):
 
 
 def render_panel(renderer, p, snap, sound, media, desk, x, y, scale, bubble=False, audio=(0, 0, 0),
-                 tools=None, palette=False):
+                 tools=None, palette=False, clipboard=None):
     """Render one real panel whose top-left sits at desk (x, y); returns (image, paste origin)."""
     p.update_width()
-    p.draw(snap, sound, .35, False, media=media, tools=tools)
+    p.draw(snap, sound, .35, False, media=media, tools=tools, clipboard=clipboard)
     # What the app tells the renderer for tool cards and the bubble's radial tool palette.
     renderer.set_tool_card(p.tools_open and p.tool_view in ("calculator", "clipboard", "blank"))
     renderer.set_bubble_proximity(1.0 if palette else 0.0)
@@ -386,6 +387,154 @@ def showcase(output, background, cover=None, scale=2, size=(1920, 960)):
     print(Path(output).resolve())
 
 
+def heading(draw, xy, title, scale):
+    """Section title on a dark pill, legible over any part of the wallpaper."""
+    x, y = xy
+    try:
+        font = ImageFont.truetype("seguisb.ttf", round(22 * scale))
+    except OSError:
+        font = ImageFont.load_default()
+    box = draw.textbbox((x, y), title, font=font)
+    pad_x, pad_y = round(14 * scale), round(7 * scale)
+    draw.rounded_rectangle((box[0] - pad_x, box[1] - pad_y, box[2] + pad_x, box[3] + pad_y),
+                           round(14 * scale), fill=(8, 18, 40, 150))
+    draw.text((x, y), title, fill="white", font=font)
+
+
+def gallery(output, background, cover=None, scale=2):
+    """Every view, one row per section in tab order, over one continuous wallpaper."""
+    snap, sound, media, am = showcase_fixtures(cover)
+    S = scale
+    L = lambda v: round(v * S)
+    tools = ToolController(Path(tempfile.mkdtemp()) / "tools.json")   # scratch state, never the user's
+    for key in ("1", "2", "8", "0", "\u00d7", "1", ".", "1", "6", "="):
+        tools.press(key)
+    clipboard = ClipboardController()
+    samples = ({"kind": "Text", "content": "Honestly, Nevermind \u2014 track list for the road trip"},
+               {"kind": "Files", "content": [r"C:\Music\Falling Back.m4a", r"C:\Music\Sticky.m4a"]},
+               {"kind": "Text", "content": "Blob v5.1 release notes"},
+               {"kind": "Text", "content": "Settings \u2192 Performance \u2192 Memory Saver"})
+    for i, item in enumerate(samples):
+        clipboard.ingest(item, now=i + 1)
+    conflict = copy.copy(sound)
+    conflict.fx_conflict = True
+    game = dict(fps=144, frame_ms=6.94, ram_percent=48, ram_gb=7.3)
+
+    def card(caption, page, view="now", compact=False, span=1, **extra):
+        return dict(caption=caption, page=page, view=view, compact=compact, span=span, extra=extra)
+
+    sections = [
+        ("System", [card("Hardware card", "blob"), card("Compact", "blob", compact=True),
+                    card("Sensor details", "blob", details_open=True), card("Bubble", "blob", "bubble")]),
+        ("Sound", [card("Sound card", "sound"), card("Compact", "sound", compact=True),
+                   card("Bubble", "sound", "bubble"), card("FxSound handoff", "sound", sound=conflict)]),
+        ("Music", [card("Full player", "music"), card("Mini player", "music", compact=True),
+                   card("Player bubble", "music", "bubble", compact=True, audio=(.85, .55, .9)),
+                   card("Cover view", "music", "art", compact=True, hover_key="arthover")]),
+        ("Music library", [card("Cover options", "music", "art", compact=True, music_menu="options"),
+                           card("Volume", "music", "art", compact=True, music_menu="volume"),
+                           card("Search", "music", "search", compact=True),
+                           card("Playing Next", "music", "queue")]),
+        ("Gaming", [card("Horizontal strip", "gaming", span=2, game=game, tabs_open=False, tabs_t=0),
+                    card("Vertical strip", "gaming", "vertical", game=game, tabs_t=0),
+                    card("FPS bubble", "gaming", "bubble", game=game, tabs_t=0)]),
+        ("Settings", [card("Settings", "settings", scroll=4),
+                      card("Shortcut", "settings", compact=True, scroll=17),
+                      card("Compact", "settings", compact=True, scroll=10)]),
+        ("Tools", [card("Tool palette", "blob", "bubble", tool_reveal=1.0, anchor_side="right", palette=True),
+                   card("Calculator", "blob", tools_open=True, tool_view="calculator", tool_size_scale=.8,
+                        mode="basic"),
+                   card("Scientific", "blob", tools_open=True, tool_view="calculator", tool_size_scale=.8,
+                        mode="scientific"),
+                   card("Clipboard", "blob", tools_open=True, tool_view="clipboard", tool_size_scale=.8)]),
+    ]
+
+    def build(c):
+        p = RecordingPanel(S)
+        p.set_compact(c["compact"])
+        page, view, extra = c["page"], c["view"], dict(c["extra"])
+        p.page, p.music_view, p.am = page, view, am
+        p.tabs_t = 0 if page == "blob" else 1
+        p.hardware_view = "bubble" if page == "blob" and view == "bubble" else "card"
+        p.sound_view = "bubble" if page == "sound" and view == "bubble" else "card"
+        p.gaming_view = view if page == "gaming" and view in ("bubble", "vertical") else "horizontal"
+        p.hardware_mode = "balanced"
+        p.hw_note = "CPU, GPU and fan sensors come from LibreHardwareMonitor."
+        p.scroll["settings"] = extra.pop("scroll", 0)
+        c["sound"] = extra.pop("sound", sound)
+        c["audio"] = extra.pop("audio", (0, 0, 0))
+        c["palette"] = extra.pop("palette", False)
+        c["mode"] = extra.pop("mode", None)
+        for key, value in extra.items():
+            setattr(p, key, value)
+        if c["mode"]:
+            tools.mode = c["mode"]
+        p.update_width()
+        p.draw(snap, c["sound"], .35, False, media=media, tools=tools, clipboard=clipboard)
+        c["panel"], c["w"], c["h"] = p, round(p.w / p.SS), round(p.height(snap) / p.SS)
+        c["bubble"] = p.w <= round(p.BUBBLE_W * p.S) or c["palette"]
+        return c
+
+    margin, col, gap, head, cap = L(72), L(340), L(44), L(64), L(34)
+    width = 2 * margin + 4 * col + 3 * gap
+    rows, y = [], margin
+    for title, cards in sections:
+        built = [build(c) for c in cards]
+        rows.append((title, y, built))
+        y += head + cap + max(c["h"] for c in built) + L(56)
+    height = y + margin - L(56)
+
+    pad = L(900)
+    desk = np.asarray(cover_image(background, width + 2 * pad, height + 2 * pad))[..., ::-1]
+    placed = []
+    for title, top, built in rows:
+        slot = 0
+        for c in built:
+            span_w = c["span"] * col + (c["span"] - 1) * gap
+            x0 = margin + slot * (col + gap)
+            c["x"], c["y"] = x0 + (span_w - c["w"]) // 2, top + head + cap
+            c["caption_xy"] = (x0 + L(6), top + head + L(4))
+            slot += c["span"]
+            placed.append(c)
+
+    def renderer(width, height):
+        # One standalone GL context at a time: moderngl does not switch between them.
+        with patch.object(glass, "ScreenSource", return_value=NS(frozen=False)):
+            r = glass.GlassRenderer(S, round(width * S), round(height * S))
+        r.set_supersample(blob.Panel.SS)
+        return r
+
+    shots = []
+    wide = renderer(340, 740)
+    for c in placed:
+        if c["w"] <= L(340):
+            if c["mode"]:
+                tools.mode = c["mode"]
+            shots.append(render_panel(wide, c["panel"], snap, c["sound"], media, desk, pad + c["x"],
+                                      pad + c["y"], S, bubble=c["bubble"], audio=c["audio"], tools=tools,
+                                      palette=c["palette"], clipboard=clipboard))
+    strip = renderer(blob.Panel.GAMING_WIDE, 300)
+    for c in placed:
+        if c["w"] > L(340):
+            shots.append(render_panel(strip, c["panel"], snap, c["sound"], media, desk, pad + c["x"],
+                                      pad + c["y"], S))
+
+    scene = Image.fromarray(np.ascontiguousarray(desk[..., ::-1]))
+    for img, (x, y) in shots:
+        scene.paste(img, (x, y))
+    scene = scene.crop((pad, pad, pad + width, pad + height))
+    draw = ImageDraw.Draw(scene, "RGBA")
+    for title, top, _ in rows:
+        heading(draw, (margin + L(14), top + L(10)), title, S)
+    for c in placed:
+        label(draw, c["caption_xy"], c["caption"], S)
+    if str(output).lower().endswith((".jpg", ".jpeg")):
+        scene.save(output, quality=94, subsampling=0, optimize=True)
+    else:
+        scene.save(output, optimize=True)
+    print(Path(output).resolve())
+
+
 def cover_image(path, width, height):
     return cover(Image.open(path).convert("RGB"), width, height)
 
@@ -399,11 +548,14 @@ if __name__ == "__main__":
     parser.add_argument("--background", help="photo to use as the desktop behind the glass")
     parser.add_argument("--scale", type=float, default=1, help="display scale, e.g. 2 for a HiDPI render")
     parser.add_argument("--showcase", action="store_true", help="one desktop-sized hero scene (needs --background)")
+    parser.add_argument("--gallery", action="store_true", help="every view, one row per section (needs --background)")
     parser.add_argument("--cover", help="album artwork for --showcase/--album (default: an original placeholder)")
     parser.add_argument("--album", action="store_true", help="use the showcase album instead of stress-test data")
     args = parser.parse_args()
     if args.morph:
         morph_preview(args.output)
+    elif args.gallery:
+        gallery(args.output, args.background, args.cover, args.scale if args.scale != 1 else 2)
     elif args.showcase:
         showcase(args.output, args.background, args.cover, args.scale if args.scale != 1 else 2)
     else:
