@@ -438,14 +438,26 @@ class GamingInputTests(unittest.TestCase):
         self.u.GetWindow.assert_not_called()
         self.u.SetWindowPos.assert_not_called()
 
-    def test_hidden_and_other_views_never_force_topmost(self):
+    def test_hidden_panel_never_forces_topmost(self):
         self.u.GetForegroundWindow.return_value = 500
         self.app.visible = False
         self.app.maintain_gaming_topmost()
-        self.app.visible, self.app.panel.page = True, "music"
-        self.app.maintain_gaming_topmost()
         self.u.SetWindowPos.assert_not_called()
         self.u.GetForegroundWindow.assert_not_called()
+
+    def test_every_view_stays_above_a_topmost_foreground_window(self):
+        self.u.GetForegroundWindow.return_value = 500
+        self.u.GetWindow.side_effect = [400, 500]
+        self.app.panel.page = "music"
+        self.app.maintain_gaming_topmost()
+        self.u.SetWindowPos.assert_called_once_with(101, -1, 0, 0, 0, 0, 0x213)
+        self.u.SetForegroundWindow.assert_not_called()
+
+    def test_foreground_change_raises_immediately(self):
+        self.u.GetForegroundWindow.return_value = 500
+        self.u.GetWindow.side_effect = [500]
+        self.app._on_foreground_change(0, 3, 500, 0, 0, 0, 0)
+        self.u.SetWindowPos.assert_called_once_with(101, -1, 0, 0, 0, 0, 0x213)
 
     def test_lost_topmost_style_is_restored(self):
         self.u.GetForegroundWindow.return_value = 500

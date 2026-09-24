@@ -157,6 +157,12 @@ class INPUT(ctypes.Structure):
 
 HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 user32.SetWindowsHookExW.restype = wintypes.HHOOK
+EVENT_SYSTEM_FOREGROUND = 0x0003
+WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND, wintypes.LONG,
+                                  wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+user32.SetWinEventHook.restype = wintypes.HANDLE
+user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WINEVENTPROC,
+                                   wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
 user32.CallNextHookEx.restype = LRESULT
 user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
@@ -2709,6 +2715,12 @@ class App:
         self._hookproc = HOOKPROC(self._keyboard_hook)
         self._hook = user32.SetWindowsHookExW(13, self._hookproc, k32.GetModuleHandleW(None), 0)
         threading.Thread(target=self._watch_dual_control, daemon=True).start()
+        # React the moment another window takes the foreground instead of
+        # waiting for the 1 Hz check. Out-of-context: runs on this thread's
+        # message loop, never inside the other process.
+        self._foreground_proc = WINEVENTPROC(self._on_foreground_change)
+        self._foreground_hook = user32.SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, self._foreground_proc, 0, 0, 0)
 
         self._wndproc = WNDPROC(self.wndproc)
         hinst = k32.GetModuleHandleW(None)
@@ -3773,7 +3785,13 @@ class App:
         return True
 
     def maintain_gaming_topmost(self):
-        if not self.visible or self.panel.page != "gaming":
+        """Keep Blob above whatever comes to the front, on every page.
+
+        Runs once a second and immediately whenever the foreground window
+        changes. It used to run only on the Gaming page, so on other pages a
+        focused game or any always-on-top window stayed in front of Blob.
+        """
+        if not self.visible:
             return
         # Games can themselves become topmost when focused. Creating Blob with
         # TOPMOST once does not keep it above another topmost window thereafter.
@@ -3794,6 +3812,12 @@ class App:
             # NOMOVE | NOSIZE | NOACTIVATE | NOOWNERZORDER. Never change focus,
             # click-through, game settings, or the game's own window styles.
             user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x213)
+
+    def _on_foreground_change(self, hook, event, hwnd, obj, child, thread, ms):
+        try:
+            self.maintain_gaming_topmost()
+        except Exception:
+            pass
 
     def show(self):
         self.snap = self.mon.snapshot() or self.snap or empty_snapshot()
@@ -5338,6 +5362,8 @@ class App:
         self.gaming.shutdown()
         self.sound.shutdown()
         user32.UnhookWindowsHookEx(self._hook)
+        if getattr(self, "_foreground_hook", None):
+            user32.UnhookWinEvent(self._foreground_hook)
         ctypes.windll.winmm.timeEndPeriod(1)
         self.icon.stop()
         user32.DestroyWindow(self.hwnd)
