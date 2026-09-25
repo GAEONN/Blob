@@ -3,6 +3,8 @@
 Windows plays everything into the VB-Audio virtual cable; we read it back from "CABLE Output",
 run EQ → bass → clarity → surround → boost → loudness compressor → look-ahead limiter, and
 play it on the real output device (held at 100 %; your volume slider lives on the cable).
+VB-CABLE reports hardware volume, so Windows never attenuates what goes through it and the cable
+itself ignores its own slider and mute. The app mirrors them into VOLUME and we apply them here.
 Parameters and the spectrum are exchanged through shared memory.
 
 usage: pythonw audio_engine.py "<output device name>" "<output endpoint id>" "<shared memory name>"
@@ -24,6 +26,7 @@ from scipy.signal import sosfilt
 SHM_NAME = "BlobSound"
 # shared-memory slots (float64)
 HEARTBEAT, ENABLED, BOOST, BASS, CLARITY, SURROUND, VERSION, STATUS, QUIT, LEVEL = range(10)
+VOLUME = 12   # linear gain from the cable's Windows volume and mute; the app writes it
 EQ0, SPEC0 = 16, 32
 EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 N_BANDS = 28
@@ -74,6 +77,7 @@ class Engine:
         self.zi = np.zeros((len(self.sos), 2, 2))
         self.delay = np.zeros((BLOCK, 2), np.float32)  # one block of look-ahead for the limiter
         self.gain = 1.0
+        self.volume = 1.0
         self.comp_db = 0.0
         self.ring = np.zeros(2048, np.float32)
         self.blocks = 0
@@ -128,10 +132,14 @@ class Engine:
         if self.blocks < 12:  # the device's first buffers can hold junk: stay silent, then fade in
             y *= max(0.0, (self.blocks - 8) / 4)
             self.gain = min(self.gain, 1.0)
-        outdata[:] = y
+        # Windows volume / mute, ramped over the block so slider moves never click.
+        want = min(1.0, max(0.0, float(p[VOLUME])))
+        outdata[:] = y * np.linspace(self.volume, want, len(y), dtype=np.float32)[:, None]
+        self.volume = want
         self.delay = x
 
-        # spectrum for the glass visualizer (~30 Hz)
+        # spectrum for the glass visualizer (~30 Hz), before the volume so it
+        # keeps moving with the music at any listening level
         mono = y.mean(1)
         self.ring = np.roll(self.ring, -len(mono))
         self.ring[-len(mono):] = mono
@@ -167,7 +175,8 @@ def restore_default(endpoint_id):
         vol = None
         for d in AudioUtilities.GetAllDevices(data_flow=0, device_state=1):
             name = str(d.FriendlyName or "").casefold()
-            if "vb-audio" in name and (name.startswith("cable in") or "cable input" in name):
+            if "vb-audio virtual cable" in name or (
+                    "vb-audio" in name and (name.startswith("cable in") or "cable input" in name)):
                 vol = d.EndpointVolume.GetMasterVolumeLevelScalar()
         for d in AudioUtilities.GetAllDevices(data_flow=0, device_state=1):
             if d.id == endpoint_id and vol is not None:

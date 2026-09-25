@@ -17,7 +17,7 @@ import psutil
 
 import engine as core
 from audio_engine import (BASS, BOOST, CLARITY, ENABLED, EQ0, HEARTBEAT, LEVEL, N_BANDS, QUIT,
-                          SPEC0, STATUS, SURROUND, VERSION)
+                          SPEC0, STATUS, SURROUND, VERSION, VOLUME)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CABLE_IN = "CABLE Input (VB-Audio Virtual Cable)"
@@ -60,9 +60,14 @@ def _dev(name):
 
 
 def _is_cable_input_name(name):
-    """Match VB-CABLE playback endpoints across driver naming variants."""
+    """Match VB-CABLE playback endpoints across driver naming variants.
+
+    Renaming the device in Windows (e.g. to "Blob Sound") changes only the
+    first part: the name stays "<your name> (VB-Audio Virtual Cable)".
+    """
     low = str(name or "").casefold()
-    return "vb-audio" in low and (low.startswith("cable in") or "cable input" in low)
+    return "vb-audio virtual cable" in low or (
+        "vb-audio" in low and (low.startswith("cable in") or "cable input" in low))
 
 
 def _is_cable_output_name(name):
@@ -77,8 +82,7 @@ def cable_input_name(refresh=False):
     if CABLE_IN in devices:
         return CABLE_IN
     candidates = [name for name in devices if _is_cable_input_name(name)]
-    return next((name for name in candidates if name.casefold().startswith("cable in")),
-                candidates[0] if candidates else None)
+    return candidates[0] if candidates else None
 
 
 def fxsound_output_name():
@@ -131,6 +135,18 @@ def _endpoint_volume(name):
     return _vol[name]
 
 
+def cable_gain(name):
+    """Linear gain for the cable's Windows volume and mute (0 when muted)."""
+    try:
+        ev = _endpoint_volume(name)
+        if ev.GetMute() or ev.GetMasterVolumeLevelScalar() <= 0.0005:
+            return 0.0
+        return float(min(1.0, 10 ** (ev.GetMasterVolumeLevel() / 20.0)))
+    except Exception:
+        _vol.pop(name, None)
+        return None
+
+
 def get_volume(name):
     try:
         return _endpoint_volume(name).GetMasterVolumeLevelScalar()
@@ -180,6 +196,7 @@ class Sound:
         self.shm = shared_memory.SharedMemory(create=True, size=64 * 8)
         self.p = np.ndarray((64,), np.float64, buffer=self.shm.buf)
         self.p[:] = 0
+        self.p[VOLUME] = 1.0   # full volume until the cable's real level is published
         self.p[HEARTBEAT] = time.time()
         self.push()
         self.cable = None          # set by the worker: is VB-Audio Virtual Cable installed?
@@ -411,6 +428,36 @@ class Sound:
                 self.proc.wait(2)
         self.proc = None
 
+    def _publish_cable_volume(self):
+        """Mirror the cable's volume/mute into the engine (the cable itself ignores them)."""
+        name = self.cable_name or cable_input_name()
+        gain = cable_gain(name) if name else None
+        if gain is not None:
+            self.p[VOLUME] = gain
+
+    def _watch_cable_volume(self):
+        """Apply volume keys, the taskbar slider and mute the instant they change."""
+        from pycaw.callbacks import AudioEndpointVolumeCallback
+        owner = self
+
+        class _Changed(AudioEndpointVolumeCallback):
+            def on_notify(self, new_volume, new_mute, event_context, channels, channel_volumes):
+                try:
+                    owner._publish_cable_volume()
+                except Exception:
+                    pass
+
+        name = self.cable_name or cable_input_name()
+        if not name or getattr(self, "_volume_watch_name", None) == name:
+            return
+        try:
+            callback = _Changed()
+            _endpoint_volume(name).RegisterControlChangeNotify(callback)
+            self._volume_watch = callback          # keep the COM object alive
+            self._volume_watch_name = name
+        except Exception:
+            self._volume_watch_name = None
+
     def _route(self, on):
         if on and not self.routed:
             if not self._ensure_engine():
@@ -432,6 +479,8 @@ class Sound:
                 set_volume(self.cable_name, vol)
                 set_volume(self.output, 1.0)
             set_default(cable)
+            self._publish_cable_volume()
+            self._watch_cable_volume()
             self.routed = True
         elif not on and self.routed:
             self._unroute()
@@ -479,6 +528,10 @@ class Sound:
         v = get_volume(default_output_name())
         if v is not None:
             self.volume = v
+        # Safety net for the instant notification (and after a device rename).
+        self._publish_cable_volume()
+        if self.routed:
+            self._watch_cable_volume()
         if self.proc and self.proc.poll() is not None:
             self.proc = None
             if self.enabled:

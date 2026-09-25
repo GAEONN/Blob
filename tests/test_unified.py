@@ -262,7 +262,7 @@ class UnifiedTests(unittest.TestCase):
             'engine.py': 'fddf6cd47f896967851540034a6f787732f832a3ba962d50e1865d45ad7f37c3',
             'glass.py': 'ac13778074cc8d43450fe9dd20bcc14626e78353afa1ac864447c78b1a600e20',
                            'media.py': '746b402550e783cd195076795f5f9aacaa7bf6c7a30155c2f6153f144fe92807',
-            'sound.py': 'cdb5fc4bd15a60f2509415de68fd6cea61e219ca8888ec078c5b92e909f874b1',
+            'sound.py': '7f9ad93fbf5e964d63455b7398a9e0d381f323a325e6298f534a9a9bca08b554',
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
