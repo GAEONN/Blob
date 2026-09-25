@@ -128,6 +128,14 @@ run at the same time.
 </details>
 
 <details>
+<summary><b>My sound output is called "CABLE Input". Can I rename it?</b></summary>
+
+Yes. Open **Settings → System → Sound**, click **CABLE Input** under *Output*, choose **Rename**
+and call it something like **Blob Sound**. Blob keeps working after the rename. Rename only that
+output device; leave **CABLE Output** under *Input* as it is.
+</details>
+
+<details>
 <summary><b>Blob doesn't appear in my screenshots or recordings.</b></summary>
 
 That's on purpose, so the glass looks right. Turn on **Include Blob in screenshots and recordings**
@@ -241,6 +249,8 @@ process and then played on the selected physical output. The processing chain pr
 clarity, stereo width, loudness compression, and a look-ahead limiter. Blob accepts the installed
 VB-CABLE endpoint-name variants and can use FxSound's configured physical destination after the
 user chooses **Use Blob audio** to hand off the route.
+The Windows volume slider, mute and volume keys control Blob's sound directly: the cable ignores
+its own volume, so Blob mirrors it into the DSP (instantly, following Windows' own volume curve).
 
 Running DSP outside the interface keeps rendering stalls away from the audio stream. If VB-CABLE is
 missing, the Sound view reports the missing setup instead of silently failing. FxSound and Blob
