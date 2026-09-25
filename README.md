@@ -65,7 +65,7 @@ irm https://raw.githubusercontent.com/GAEONN/Blob/main/install.ps1 | iex
 | Show or hide Blob | Click the **Blob icon** near the clock (bottom-right of the taskbar). You may need to click **^** to see it. |
 | Switch between the small view and the big Dashboard | Press **F10** while Blob is selected, or right-click the Blob icon â†’ **SmallBlob / Dashboard** |
 | Move Blob | Drag it anywhere |
-| Let your mouse click *through* Blob (for games) | Press **Ctrl + Alt + V** to lock it; press again to unlock |
+| Let your mouse click *through* Blob (for games) | Press **Left Ctrl + Right Ctrl** together (or **Ctrl + Alt + V**) to lock it; press again to unlock. Blob stays locked, in the same spot, even after a restart |
 | Start Blob with Windows | Right-click the Blob icon â†’ **Start with Windows** |
 | Close Blob | Right-click the Blob icon â†’ **Exit Blob** |
 
@@ -181,7 +181,7 @@ and a slim, downward-expanding left game dock.
 - Click Blob's tray icon to show or hide the interface.
 - Drag the normal card or an empty area to pin it anywhere.
 - Press `Esc` to dismiss the current expanded Music view, then dismiss Blob.
-- Press `Ctrl+Alt+V` (or your migrated shortcut) to lock/unlock SmallBlob or the game dock.
+- Press Left Ctrl + Right Ctrl together, or `Ctrl+Alt+V` (or your migrated shortcut), to lock/unlock SmallBlob or the game dock.
   The shortcut is editable in Settings; the full Dashboard cannot be made click-through.
 - Locked mode passes pointer input through Blob on every view.
 - Enable **Include Blob in screenshots and recordings** in Settings when capture visibility matters.
@@ -258,7 +258,8 @@ rather than monitor refresh rate.
 
 - Unlock Blob to navigate or reposition the strip.
 - Lock Blob before playing so clicks pass through it.
-- While locked in Gaming, hold the shortcut modifiers to drag temporarily without changing the lock.
+- Locked is completely locked: nothing can drag it, and it keeps its spot through restarts and
+  resolution changes. Unlock it to move it.
 - Use windowed or borderless fullscreen; ordinary desktop overlays cannot guarantee visibility over
   exclusive fullscreen applications.
 
