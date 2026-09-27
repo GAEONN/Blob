@@ -11,3 +11,23 @@ tools/PresentMon-download.tmp
 tools/LibreHardwareMonitor/
 .impeccable/review/
 outputs/
+blob-glass.ico
+# Personal handwriting samples and derived glyph profiles must never be committed.
+handwriting-samples/
+handwriting-profile/
+handwriting_profiles/
+training-scans/
+user-handwriting/
+**/handwriting-samples/
+**/handwriting-profile/
+**/handwriting_profiles/
+**/training-scans/
+# Also protect the app's LocalAppData layout if a developer redirects it into a checkout.
+handwriting/active.json
+handwriting/.active-*.tmp
+handwriting/profiles/
+handwriting/training/
+**/handwriting/active.json
+**/handwriting/.active-*.tmp
+**/handwriting/profiles/
+**/handwriting/training/

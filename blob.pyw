@@ -5,6 +5,7 @@ anywhere (e.g. over a game or video); click the tray number again to hide it."""
 import ctypes
 import math
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -26,6 +27,7 @@ from sound import PRESET_ORDER, Sound
 from reactive import AudioMotion
 from toolset import ClipboardController, ToolController
 import admin_gaming
+import admin_handwriting
 from glass import user32
 
 
@@ -39,11 +41,12 @@ def music_visualizer_bands(spectrum, peak):
     return np.full(28, np.sqrt(peak), dtype=np.float32)
 
 
-APP_NAME = "Blob v5"
+APP_NAME = "Blob v6"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 FONTS = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Fonts")
 
 k32 = ctypes.windll.kernel32
+shell32 = ctypes.windll.shell32
 
 # ─────────────────────────── Win32 plumbing ───────────────────────────
 LRESULT = ctypes.c_ssize_t
@@ -97,9 +100,12 @@ if hasattr(user32, "GetDpiForWindow"):
     user32.GetDpiForWindow.restype = wintypes.UINT
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                 ctypes.c_int, ctypes.c_int, wintypes.UINT]
+shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+shell32.DragAcceptFiles.restype = None
 
 WM_DESTROY, WM_ACTIVATE, WM_SETCURSOR, WM_KEYDOWN, WM_TIMER = 0x02, 0x06, 0x20, 0x100, 0x113
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_CAPTURECHANGED = 0x200, 0x201, 0x202, 0x215
+WM_DROPFILES = 0x233
 WM_SETTINGCHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED = 0x1A, 0x7E, 0x02E0
 WM_APP_TOGGLE, WM_APP_EXIT, WM_APP_REFOCUS = 0x8001, 0x8002, 0x8003
 WM_APP_GAMING_LOCK, WM_HOTKEY, GAMING_HOTKEY = 0x8004, 0x312, 1
@@ -545,6 +551,8 @@ class Panel:
     # Transparent canvas for concentric arc tools around the unchanged bubble.
     TOOL_PALETTE_W, TOOL_PALETTE_H = 220, 210
     GAMING_CARD_W, GAMING_CARD_H = 300, 144
+    # Tool cards share the same readable width and monitor-fit contract.
+    HANDWRITING_W, HANDWRITING_H = TOOL_W, TOOL_H
     RADIUS = 34     # the pane's corner; anything inset by p gets RADIUS - p (concentric radii)
     SS = 2          # content is drawn at 2x and filtered down on the GPU
     DETAIL_ROWS = 8  # keep large sensor inventories inside the renderer; scroll the rest
@@ -591,6 +599,7 @@ class Panel:
         self.tools_open = False
         self.tool_view = None
         self.gaming_toggle = None  # admin build only
+        self.handwriting = None    # local handwriting profile and document tool
         self.tool_minimized = False
         self.tool_glossiness = 0.78
         self.calculator_mode = "scientific"
@@ -618,7 +627,9 @@ class Panel:
             width = self.MAGNIFIER_W if self.tool_view == "magnifier" else self.TOOL_W
             if self.tool_view == "blank" and self.gaming_toggle:
                 width = self.GAMING_CARD_W
-            if self.tool_view in ("calculator", "clipboard", "blank"):
+            if self.tool_view == "handwriting":
+                width = self.HANDWRITING_W
+            if self.tool_view in ("calculator", "clipboard", "blank", "handwriting"):
                 width *= self.tool_size_scale
         elif self.tool_reveal > .06 and self.tool_palette_available():
             width = self.TOOL_PALETTE_W
@@ -645,7 +656,7 @@ class Panel:
     def height(self, s, page=None):
         page, c = page or self.page, self.compact
         if self.tools_open:
-            if self.tool_view in ("calculator", "clipboard", "blank"):
+            if self.tool_view in ("calculator", "clipboard", "blank", "handwriting"):
                 return round(self.tool_card_height() * self.S * self.tool_size_scale)
             return round((self.MAGNIFIER_H if self.tool_view == "magnifier" else self.TOOL_H) * self.S)
         if self.tool_reveal > .06 and self.tool_palette_available():
@@ -789,6 +800,8 @@ class Panel:
         """The calculator and Clipboard share one monitor-safe card contract."""
         if self.tool_view == "blank" and self.gaming_toggle:
             return self.GAMING_CARD_H + (30 if self.gaming_toggle.error else 0)
+        if self.tool_view == "handwriting":
+            return self.HANDWRITING_H
         return self.calculator_height() if self.tool_view == "calculator" else self.TOOL_H
 
     def tool_header_layout(self, leading=True):
@@ -1012,7 +1025,7 @@ class Panel:
         if self.tools_open:
             saved_scale, saved_fonts = self.S, self.f
             try:
-                if self.tool_view in ("calculator", "clipboard", "blank"):
+                if self.tool_view in ("calculator", "clipboard", "blank", "handwriting"):
                     self.S *= self.tool_size_scale
                     font_scale = max(self.S, self.SS)
                     if self._tool_fonts is None or self._tool_fonts.S != font_scale:
@@ -1363,6 +1376,11 @@ class Panel:
         items = (("calculator", "\uE8EF", 16), ("clipboard", "\uE8C8", 13),
                  ("magnifier", "\uE721", 13),
                  ("blank", "\uE7FC" if self.gaming_toggle else None, 15))
+        # The local handwriting tool adds a fifth lobe. The fan tightens and
+        # starts a little higher so every lobe stays inside the palette canvas.
+        if self.handwriting:
+            items += (("handwriting", "\uE70F", 14),)
+        start, step = (210, 36) if len(items) > 4 else (204, 46)
         for index, (tool, icon, icon_size) in enumerate(items):
             key = "tool:restore" if self.tool_minimized and self.tool_view == tool else "tool:" + tool
             delay = index * .045
@@ -1372,7 +1390,7 @@ class Panel:
             ease = phase * phase * (3.0 - 2.0 * phase)
             # A slightly wider fan leaves a real breathable gap between the
             # now-round caps once the palette has finished extruding.
-            angle = math.radians(204 - index * 46 + 8 * (1 - ease))
+            angle = math.radians(start - index * step + 8 * (1 - ease))
             if self.anchor_side == "left":
                 angle = math.pi - angle
             # Start inside the body, then stretch out through a liquid neck.
@@ -1420,6 +1438,9 @@ class Panel:
             return
         if self.tool_view == "blank" and self.gaming_toggle:
             self._gaming_mode_card(self.gaming_toggle)
+            return
+        if self.tool_view == "handwriting" and self.handwriting:
+            self._handwriting_card(self.handwriting)
             return
         if self.tool_view == "blank":
             self._blank_tool_card()
@@ -1883,6 +1904,250 @@ class Panel:
             hint = ("Ask Claude to set it up" if gm.error == admin_gaming.NOT_INSTALLED
                     else self.wrap(gm.error, 11, "Regular", W - 44*S)[0])
             self.label(W/2, 146*S, hint, 12, "Regular", 225, "mm")
+
+    def _handwriting_card(self, hw):
+        """Private handwriting setup and writing tools, matching the local tool cards."""
+        S, W = self.S, self.w
+        header = self.tool_header_layout(leading=True)
+        self.label(header["leading"], 36*S, "\uE70F", 16, a=245, anchor="mm", icon=True)
+        self.label(header["title"], 36*S, "Handwriting", 16, "Semibold Text", 245, header["title_anchor"])
+        self.glass_button("tool:minimize", header["minimize"], 36*S, 15*S, "\uE73F", 12, always=True)
+        self.glass_button("tool:close", header["close"], 36*S, 15*S, "\uE711", 12, always=True)
+        if hw.picker_open:
+            self._handwriting_picker(hw, header)
+            return
+
+        busy = hw.busy or hw.worksheet_busy
+        half = (W - 58*S) / 2
+        left_cx, right_cx = 24*S + half/2, W - 24*S - half/2
+        self.segmented("hw:section", (("write", "Write"), ("profile", "My writing")), hw.section,
+                       (24*S, 58*S, W-24*S, 92*S), 12, hit=not busy)
+        if hw.section == "profile" or not hw.profile_ready:
+            self._handwriting_profile_card(hw, busy, left_cx, right_cx, half)
+            return
+
+        self.label(24*S, 112*S, "Task source", 13, "Semibold Text", 220, "lm")
+        if busy:
+            for cx, text in ((left_cx, "Paste text"), (right_cx, "Browse Downloads")):
+                self.label(cx, 145*S, text, 12, "Regular", 135, "mm")
+        else:
+            self.tool_button("hw:clipboard", left_cx, 145*S, 21*S, text="Paste text",
+                             width=half, height=42*S, size=13)
+            self.tool_button("hw:file", right_cx, 145*S, 21*S, text="Browse Downloads",
+                             width=half, height=42*S, size=13)
+        box = (24*S, 174*S, W-24*S, 284*S)
+        self.static(box, 20*S, strength=5*S, bevel=14*S, rim=.62,
+                    frost=max(.55, self.tool_glossiness), lift=.14, raised=1.0)
+        if hw.source is None:
+            self.label(W/2, 212*S, "Drop one task file here", 15, "Semibold Text", 240, "mm")
+            self.label(W/2, 241*S, "TXT · MD · DOCX · CSV · XLSX · XLSM", 11, "Regular", 195, "mm")
+        else:
+            self.label(42*S, 200*S, "SELECTED FILE", 10, "Semibold Text", 190, "lm")
+            self.label(42*S, 226*S, self.fit(hw.source_label, 16, "Semibold Text", W-84*S),
+                       16, "Semibold Text", 248, "lm")
+            self.label(42*S, 256*S, self.fit(hw.source_meta, 12, "Regular", W-84*S), 12, "Regular", 195, "lm")
+            self.label(42*S, 277*S, "Drop another file to replace it", 10, "Regular", 170, "lm")
+        self.rects["hw:dropzone"] = box
+
+        # Format controls use the same full-width segmented tracks as Settings.
+        self.label(24*S, 316*S, "Format", 13, "Semibold Text", 220, "lm")
+        self.segmented("hw:mode", (("texto", "Text"), ("tabla", "Table")), hw.mode,
+                       (112*S, 300*S, W-24*S, 332*S), 13, hit=not busy)
+        self.label(24*S, 388*S, "Ink", 13, "Semibold Text", 220, "lm")
+        self.segmented("hw:ink", (("negra", "Black"), ("azul", "Blue")), hw.ink,
+                       (112*S, 372*S, W-24*S, 404*S), 13, hit=not busy)
+
+        # 3. character check and progress
+        self.label(24*S, 442*S, "Character check", 13, "Semibold Text", 220, "lm")
+        box = (24*S, 458*S, W-24*S, 550*S)
+        self.static(box, 20*S, strength=5*S, bevel=14*S, rim=.54,
+                    frost=max(.22, self.tool_glossiness-.46), lift=.10, raised=.72)
+        status = hw.error or hw.status
+        self.label(42*S, 485*S, self.fit(status, 14, "Semibold Text", W-84*S), 14, "Semibold Text",
+                   245 if not busy else 225, "lm")
+        if hw.progress and hw.progress[1]:
+            done, total = hw.progress
+            x0, x1, y = 42*S, W-42*S, 516*S
+            width = max(1, round(3*S))
+            self.di.line((x0, y, x1, y), fill=70, width=width)
+            self.di.line((x0, y, x0 + (x1-x0) * done / total, y), fill=235, width=width)
+        elif hw.source is not None:
+            if hw.error:
+                hint = "Check the source file and try again"
+            elif hw.missing:
+                hint = "Missing glyphs: " + " ".join(hw.missing)
+            else:
+                hint = "Available in your personal handwriting profile"
+            self.label(42*S, 522*S, self.fit(hint, 12, "Regular", W-84*S), 12, "Regular", 200, "lm")
+
+        # 4. actions: equal-size controls, aligned with the rest of Blob's tools.
+        if hw.ready:
+            self.tool_button("hw:preview", left_cx, 594*S, 21*S, text="Preview",
+                             width=half, height=42*S, size=13)
+            self.tool_button("hw:generate", right_cx, 594*S, 21*S, text="Generate PDF",
+                             width=half, height=42*S, size=13)
+        else:
+            for cx, text in ((left_cx, "Preview"), (right_cx, "Generate PDF")):
+                self.label(cx, 594*S, text, 12, "Regular", 125, "mm")
+        if (hw.pdf or hw.previews) and not busy:
+            self.label(24*S, 656*S, "Result", 13, "Semibold Text", 220, "lm")
+            self.tool_button("hw:open", left_cx, 694*S, 18*S,
+                             text="Open PDF" if hw.pdf else "View preview",
+                             width=half, height=38*S, size=12)
+            self.tool_button("hw:folder", right_cx, 694*S, 18*S, text="Output folder",
+                             width=half, height=38*S, size=12)
+
+    def _handwriting_profile_card(self, hw, busy, left_cx, right_cx, half):
+        S, W = self.S, self.w
+        self.label(24*S, 116*S, "Create your handwriting profile", 16,
+                   "Semibold Text", 245, "lm")
+        self.label(24*S, 139*S, "Your samples stay on this PC; nothing is sent to a server.",
+                   11, "Regular", 205, "lm")
+
+        if hw.worksheet_busy:
+            self.label(W/2, 188*S, "Preparing practice sheets…", 13, "Regular", 205, "mm")
+        elif hw.worksheet_path and Path(hw.worksheet_path).is_file():
+            self.tool_button("hw:sheets:open", W/2, 188*S, 19*S, text="Open practice sheets",
+                             width=W-48*S, height=38*S, size=12)
+        else:
+            self.tool_button("hw:sheets:make", W/2, 188*S, 19*S, text="Create & open practice sheets",
+                             width=W-48*S, height=38*S, size=12)
+
+        self.label(24*S, 226*S, "Write each prompt six times with dark ink, at normal speed.",
+                   11, "Regular", 220, "lm")
+        self.label(24*S, 246*S, "Print at 100%; photograph the full page in even light.",
+                   11, "Regular", 220, "lm")
+        self.label(24*S, 266*S, "Keep all four corner squares visible and avoid shadows.",
+                   11, "Regular", 220, "lm")
+
+        for index, page_id in enumerate(admin_handwriting.PROFILE_PAGES):
+            label = admin_handwriting.handwriting_profile.PAGE_SPECS[page_id][0]
+            cy = (316 + index*56)*S
+            row = (24*S, cy-23*S, W-24*S, cy+23*S)
+            self.static(row, 18*S, strength=4*S, bevel=13*S, rim=.48,
+                        frost=max(.4, self.tool_glossiness-.16), lift=.08, raised=.6)
+            photo = hw.profile_photos.get(page_id)
+            name = photo.name if photo else "No photo selected"
+            self.label(40*S, cy-5*S, label, 12, "Semibold Text", 235, "lm")
+            self.label(40*S, cy+12*S, self.fit(name, 10, "Regular", W-186*S),
+                       10, "Regular", 190 if photo else 135, "lm")
+            if busy:
+                self.label(W-66*S, cy, "Added" if photo else "Add photo", 10,
+                           "Regular", 150, "mm")
+            else:
+                self.tool_button(f"hw:photo:{page_id}", W-73*S, cy, 16*S,
+                                 text="Replace" if photo else "Add photo",
+                                 width=104*S, height=34*S, size=11)
+
+        have_all = all(page in hw.profile_photos for page in admin_handwriting.PROFILE_PAGES)
+        if busy:
+            if hw.progress and hw.progress[1]:
+                done, total = hw.progress
+                x0, x1, y = 52*S, W-52*S, 492*S
+                self.di.line((x0, y, x1, y), fill=75, width=max(2, round(3*S)))
+                self.di.line((x0, y, x0 + (x1-x0)*done/total, y), fill=230,
+                             width=max(2, round(3*S)))
+            else:
+                self.label(W/2, 492*S, hw.profile_status, 11, "Regular", 205, "mm")
+        elif have_all:
+            self.tool_button("hw:profile:build", W/2, 492*S, 20*S,
+                             text="Create my local profile", width=W-48*S, height=40*S, size=13)
+        elif hw.profile_ready:
+            self.label(W/2, 492*S, "Profile ready · add scans to replace it", 11,
+                       "Regular", 215, "mm")
+        else:
+            self.label(W/2, 492*S, "Add one scan for each sheet to continue", 11,
+                       "Regular", 180, "mm")
+
+        box = (24*S, 522*S, W-24*S, 606*S)
+        self.static(box, 19*S, strength=4*S, bevel=13*S, rim=.52,
+                    frost=max(.25, self.tool_glossiness-.42), lift=.08, raised=.6)
+        if hw.error:
+            lines = self.wrap(hw.error, 10, "Regular", W-64*S)[:3]
+            for index, line in enumerate(lines):
+                self.label(40*S, (544+16*index)*S, line, 10, "Regular", 230, "lm")
+        elif hw.profile_ready and hw.profile_info:
+            self.label(40*S, 547*S,
+                       f"This PC · {hw.profile_info['characters']} characters · profile saved locally",
+                       11, "Semibold Text", 230, "lm")
+            self.label(40*S, 574*S, "Source photos are not copied into the profile or app folder.",
+                       10, "Regular", 190, "lm")
+        else:
+            self.label(40*S, 547*S, "Blob extracts letter samples on this device only.",
+                       11, "Semibold Text", 220, "lm")
+            self.label(40*S, 574*S, "Only the private glyph profile is kept in Local AppData.",
+                       10, "Regular", 190, "lm")
+        self.label(W/2, 636*S, "Choose scans in Blob; originals stay in Downloads.",
+                   10, "Regular", 185, "mm")
+        self.label(W/2, 658*S, "Keep personal profiles out of GitHub.",
+                   10, "Regular", 175, "mm")
+
+    def _handwriting_picker(self, hw, header):
+        """An in-Blob Downloads browser; no Windows Explorer dialog or window."""
+        S, W = self.S, self.w
+        self.glass_button("hw:picker:back", header["leading"], 36*S, 15*S, "\uE72B", 12, always=True)
+        photo_picker = hw.browse_filter == "photo"
+        self.label(header["title"], 36*S, "Choose a photo" if photo_picker else "Choose a task file",
+                   16, "Semibold Text", 245, header["title_anchor"])
+        current = Path(hw.browse_dir)
+        root = Path(hw.browse_root)
+        try:
+            relative = current.relative_to(root)
+            location = hw.browse_root_label + (" / " + str(relative) if str(relative) != "." else "")
+        except ValueError:
+            location = hw.browse_root_label
+        self.label(24*S, 78*S, self.fit(location, 13, "Semibold Text", W-48*S),
+                   13, "Semibold Text", 230, "lm")
+        half = (W-58*S)/2
+        self.tool_button("hw:picker:downloads", 24*S+half/2, 108*S, 18*S,
+                         text="Downloads", width=half, height=36*S, size=12)
+        parent_enabled = current.resolve() != root.resolve()
+        if parent_enabled:
+            self.tool_button("hw:picker:up", W-24*S-half/2, 108*S, 18*S,
+                             text="Up one folder", width=half, height=36*S, size=12)
+        else:
+            self.label(W-24*S-half/2, 108*S, "Downloads", 12, "Regular", 120, "mm")
+
+        rows_box = (24*S, 134*S, W-24*S, 606*S)
+        self.static(rows_box, 20*S, strength=5*S, bevel=14*S, rim=.5,
+                    frost=max(.54, self.tool_glossiness-.08), lift=.11, raised=.85)
+        if hw.browse_loading:
+            self.label(W/2, 354*S, "Loading this folder…", 14, "Regular", 205, "mm")
+        elif hw.browse_error:
+            self.label(W/2, 342*S, self.fit(hw.browse_error, 13, "Semibold Text", W-72*S),
+                       13, "Semibold Text", 235, "mm")
+        elif not hw.browse_entries:
+            self.label(W/2, 342*S, "No photos in this folder" if photo_picker else "No task files in this folder",
+                       14, "Semibold Text", 225, "mm")
+            self.label(W/2, 372*S, "Choose a folder or drop a file onto Blob", 11, "Regular", 180, "mm")
+        else:
+            start = hw.browse_page * admin_handwriting.BROWSE_PAGE_SIZE
+            rows = hw.browse_entries[start:start+admin_handwriting.BROWSE_PAGE_SIZE]
+            for offset, (path, is_dir) in enumerate(rows):
+                index = start + offset
+                y = (148 + offset*55)*S
+                rect = (34*S, y, W-34*S, y+48*S)
+                self.static(rect, 15*S, strength=4*S, bevel=11*S, rim=.45,
+                            frost=max(.48, self.tool_glossiness-.12), lift=.10, raised=.65)
+                key = "hw:entry:" + str(index)
+                self.rects[key] = rect
+                self.controls.append(("hover", key, rect, 15*S))
+                self.di.text((52*S, y+24*S), "\uE8B7" if is_dir else "\uE8A5",
+                             font=self.f.icon(13), fill=225, anchor="mm")
+                name = path.name + (" /" if is_dir else "")
+                self.label(74*S, y+24*S, self.fit(name, 13, "Semibold Text", W-154*S),
+                           13, "Semibold Text", 240, "lm")
+                detail = "Folder" if is_dir else path.suffix[1:].upper()
+                self.label(W-48*S, y+24*S, detail, 10, "Regular", 175, "rm")
+        pages = hw.browse_page_count
+        if pages > 1:
+            self.tool_button("hw:page:prev", 48*S, 650*S, 17*S, icon="\uE76B", size=12)
+            self.label(W/2, 650*S, f"{hw.browse_page+1} / {pages}", 12, "Regular", 205, "mm")
+            self.tool_button("hw:page:next", W-48*S, 650*S, 17*S, icon="\uE76C", size=12)
+        note = ("Photo stays in its original folder." if photo_picker
+                else "Files stay on this device until you choose one.")
+        self.label(W/2, 704*S, note,
+                   11, "Regular", 175, "mm")
 
     @property
     def magnifier_active(self):
@@ -2469,12 +2734,17 @@ class Panel:
     def _settings(self, glassiness, startup, pointer, pad, top, captureable=False):
         """Grouped, scrollable settings: each section covers one part of Blob."""
         S, W = self.S, self.w
-        rail_pad = self.edge_safe_pad(pad)
         pad = self.pad_u * S
         c = self.compact
         L = self.label
         opts = self.options
         self.view_bubble_button("settingsview:bubble", top)
+        # The edge bubble/minimize action is fixed in this header zone. Keep
+        # scrollable settings rows below it so no toggle or segment can cover it.
+        if self.anchor_side == "left":
+            L(W-pad, top + 18*S, "Settings", 16, "Semibold Text", 245, "rm")
+        else:
+            L(pad, top + 18*S, "Settings", 16, "Semibold Text", 245, "lm")
         rows = [
             ("head", "Appearance"),
             ("seg", "size", "Size", [("normal", "Regular"), ("compact", "Compact")],
@@ -2524,7 +2794,9 @@ class Panel:
                 rh = 72 + len(names) * 18 + len(hints) * 14
             layouts.append((row, rh * S, names, hints))
         total = sum(rh for _, rh, _, _ in layouts)
-        view_h = self.height(None) - top - 56 * S
+        content_top = top + 48 * S
+        view_h = self.height(None) - content_top - 56 * S
+        content_bottom = content_top + view_h
         # Scroll by complete variable-height rows. Every control can become fully visible,
         # with no half-hidden hit targets or fixed 40px steps skipping wrapped rows.
         last_first, tail_h = len(layouts) - 1, layouts[-1][1]
@@ -2535,13 +2807,17 @@ class Panel:
         self.scroll["settings"] = first
         off = sum(rh for _, rh, _, _ in layouts[:first])
         max_off = sum(rh for _, rh, _, _ in layouts[:last_first])
-        y = top
+        y = content_top
         for index, (row, rh, names, hints) in enumerate(layouts[first:], first):
             kind, key = row[0], row[1]
-            if kind == "head" and index + 1 < len(layouts) and y + rh + layouts[index + 1][1] > top + view_h:
+            if kind == "head" and index + 1 < len(layouts) and y + rh + layouts[index + 1][1] > content_bottom:
                 break  # keep each section title with its first setting
-            if y + rh <= top + view_h:
-                row_pad = rail_pad if self.anchor_side == "left" and index == first else pad
+            if y + rh <= content_bottom:
+                # Content starts below the fixed minimize control, so it does
+                # not need a one-sided horizontal shove on left-anchored cards.
+                # Keeping the same inset on both sides also keeps wrapped text,
+                # sliders and segmented controls aligned when the card flips.
+                row_pad = pad
                 if kind == "head":
                     L(row_pad, y + 14 * S, key.upper(), 10, "Semibold Text", 195, "lm")
                     self.di.rectangle((pad, y + 24 * S, W - pad, y + 24 * S + max(1, round(S)) - 1), fill=32)
@@ -2585,7 +2861,7 @@ class Panel:
             y += rh
         if total > view_h:      # scroll hint
             bar_h = view_h * view_h / total
-            by = top + (view_h - bar_h) * (off / max_off if max_off else 0)
+            by = content_top + (view_h - bar_h) * (off / max_off if max_off else 0)
             self.ink_shape((W - 9 * S, by, W - 6 * S, by + bar_h), 1.5 * S, 80)
 
 
@@ -2601,6 +2877,7 @@ class App:
         self.clipboard = ClipboardController()
         self._clipboard_poll_at = 0.0
         self._gaming_toggle = admin_gaming.GamingModeToggle() if admin_gaming.available() else None
+        self._handwriting = admin_handwriting.HandwritingTool() if admin_handwriting.available() else None
         self.hover_since = (None, 0.0)
         self.last_queue = 0.0
         self.queue_track = None
@@ -2612,6 +2889,7 @@ class App:
         self.S = S = dpi / 96
         self.panel = Panel(S)
         self.panel.gaming_toggle = self._gaming_toggle
+        self.panel.handwriting = self._handwriting
         self.panel.page = os.environ.get("BLOB_PAGE", "blob")  # debug: open on a given page
         self.panel.am = self.am
         self.panel_side = "right"
@@ -2766,8 +3044,10 @@ class App:
         wc = WNDCLASSEXW(ctypes.sizeof(WNDCLASSEXW), 0, self._wndproc, 0, 0, hinst, None,
                          user32.LoadCursorW(None, 32512), None, None, "BlobGlass", None)
         user32.RegisterClassExW(ctypes.byref(wc))
-        self.hwnd = user32.CreateWindowExW(0x80000 | 0x80 | 0x8, "BlobGlass", APP_NAME, 0x80000000,
+        self.hwnd = user32.CreateWindowExW(0x80000 | 0x80 | 0x8 | 0x10, "BlobGlass", APP_NAME, 0x80000000,
                                            0, 0, 10, 10, None, None, hinst, None)
+        if isinstance(self.hwnd, int) and self.hwnd:
+            shell32.DragAcceptFiles(self.hwnd, True)
         # keep our own pixels out of the background grab (otherwise the glass refracts itself)
         user32.SetWindowDisplayAffinity(self.hwnd, 0 if self.captureable else 0x11)
         self.glass.dump_path = os.environ.get("BLOB_DUMP")
@@ -3165,7 +3445,7 @@ class App:
         self.old_controls = []
         for key in [key for key in self.springs if key.startswith("old:")]:
             del self.springs[key]
-        if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank"):
+        if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank", "handwriting"):
             self.fit_calculator_in_work_area(cursor_pos() if self.drag is not None else None)
         self.frame_dirty = True
         if getattr(self, "visible", False) or self.snap is not None:
@@ -4140,6 +4420,9 @@ class App:
         gm = getattr(self.panel, "gaming_toggle", None)
         if gm and gm.poll() and self.panel.tools_open and self.panel.tool_view == "blank":
             self.draw_content()
+        hw = getattr(self.panel, "handwriting", None)
+        if hw and hw.poll() and self.panel.tools_open and self.panel.tool_view == "handwriting":
+            self.draw_content()
         if self._update_tabs_side():
             # A drag can cross the monitor midpoint without changing any
             # sensor state; redraw immediately so the menu/button follows it.
@@ -4274,7 +4557,7 @@ class App:
         # Poll the desktop on its own cadence. Animation can render the cached
         # glass scene every frame instead of forcing a full capture/upload.
         panel_h = self.springs["height"].x / self.ss
-        if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank"):
+        if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank", "handwriting"):
             self._constrain_calculator_frame()
             panel_h = self.springs["height"].x / self.ss
         # Size springs are allowed to overshoot for liquid motion, but never
@@ -4287,7 +4570,7 @@ class App:
         content_dirty = self.frame_dirty
         panel_y = self._panel_y(panel_h)
         if hasattr(self.glass, "set_tool_card"):
-            self.glass.set_tool_card(self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank"))
+            self.glass.set_tool_card(self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank", "handwriting"))
         self._track_magnifier(width.x / self.ss, panel_h, panel_y)
         if getattr(self, "_magnifier_follow", False):
             # WM_SETCURSOR is not guaranteed while a layered window owns
@@ -4507,7 +4790,7 @@ class App:
 
     def fit_calculator_in_work_area(self, screen_hint=None, work=None):
         if not (getattr(self.panel, "tools_open", False) and
-                self.panel.tool_view in ("calculator", "clipboard", "blank")):
+                self.panel.tool_view in ("calculator", "clipboard", "blank", "handwriting")):
             return False
         rect = self._panel_screen_rect()
         if rect is None:
@@ -4561,12 +4844,12 @@ class App:
             self._magnifier_home = (list(self.pos), self.pinned)
         if not self.panel.tools_open:
             self.tool_top = self._panel_y(self.panel.height(self.snap))
-        self.panel.tool_view = view if view in ("magnifier", "clipboard", "blank") else "calculator"
+        self.panel.tool_view = view if view in ("magnifier", "clipboard", "blank", "handwriting") else "calculator"
         self.panel.tool_minimized = False
         self.panel.tool_reveal = 0.0
         self.panel.tools_open = True
         self.panel.update_width()
-        if view in ("clipboard", "blank"):
+        if view in ("clipboard", "blank", "handwriting"):
             self.fit_calculator_in_work_area()
             self.pinned = True
         if view == "magnifier":
@@ -4655,7 +4938,7 @@ class App:
         self.frame_dirty = True
 
     def _keep_tool_return_anchor(self):
-        if self.panel.tool_view not in ("calculator", "clipboard", "blank") or self.tool_top is None:
+        if self.panel.tool_view not in ("calculator", "clipboard", "blank", "handwriting") or self.tool_top is None:
             return
         # Retraction shares the calculator's top edge. Restoring an old page's
         # bottom anchor here would send the shrinking card below the monitor.
@@ -4820,7 +5103,7 @@ class App:
             if key == "calculator":
                 self.open_calculator_tool(new=True)
             elif key == "restore":
-                if self.panel.tool_view in ("magnifier", "clipboard", "blank"):
+                if self.panel.tool_view in ("magnifier", "clipboard", "blank", "handwriting"):
                     self.open_utility_tool(self.panel.tool_view)
                 else:
                     self.open_calculator_tool(new=False)
@@ -4828,7 +5111,7 @@ class App:
                 # ``currency`` remains a harmless compatibility route for
                 # old renders; the visible satellite is now the blank slot.
                 self.open_utility_tool("blank")
-            elif key in ("magnifier", "clipboard"):
+            elif key in ("magnifier", "clipboard", "handwriting"):
                 self.open_utility_tool(key)
             elif key == "minimize":
                 self.minimize_tool(x)
@@ -4876,6 +5159,49 @@ class App:
             crossfade = True
         elif kind == "calcrate":
             self.tools.refresh_rates(force=True)
+        elif kind == "hw":
+            hw = getattr(self.panel, "handwriting", None)
+            if hw:
+                action, _, value = key.partition(":")
+                if action == "clipboard":
+                    hw.use_clipboard()
+                elif action == "file":
+                    hw.pick_file()
+                elif action == "section":
+                    hw.set_section(value)
+                elif action == "sheets":
+                    hw.create_worksheets() if value == "make" else hw.open_worksheets()
+                elif action == "photo":
+                    hw.pick_profile_photo(value)
+                elif action == "profile" and value == "build":
+                    hw.build_profile()
+                elif action == "picker":
+                    if value == "back":
+                        hw.close_picker()
+                    elif value == "downloads":
+                        hw.browse_downloads()
+                    elif value == "up":
+                        hw.browse_parent()
+                elif action == "entry":
+                    try:
+                        hw.open_browse_entry(int(value))
+                    except ValueError:
+                        pass
+                elif action == "page":
+                    hw.move_browse_page(-1 if value == "prev" else 1)
+                elif action == "mode":
+                    hw.set_mode(value)
+                elif action == "ink":
+                    hw.set_ink(value)
+                elif action == "preview":
+                    hw.preview()
+                elif action == "generate":
+                    hw.generate()
+                elif action == "open":
+                    hw.open_result()
+                elif action == "folder":
+                    hw.open_folder()
+                crossfade = True
         elif kind == "cliptab":
             if getattr(self, "clipboard", None):
                 self.clipboard.set_tab(key)
@@ -4917,6 +5243,16 @@ class App:
     # ── messages ──
     def wndproc(self, hwnd, msg, wp, lp):
         try:
+            if msg == WM_DROPFILES:
+                paths = admin_handwriting.dropped_files(wp)
+                hw = getattr(self.panel, "handwriting", None)
+                if (paths and hw and self.visible and not self.overlay_locked and self.panel.tools_open
+                        and self.panel.tool_view == "handwriting"):
+                    hw.accept_drop(paths)
+                    self.draw_content()
+                    self.frame_dirty = True
+                    self.frame()
+                return 0
             if getattr(self, "_magnifier_follow", False):
                 if msg == WM_SETCURSOR:
                     user32.SetCursor(getattr(self, "cur_blank", None))
@@ -5025,7 +5361,13 @@ class App:
                 self.hide()
                 return 0
             if msg == WM_KEYDOWN and wp == 0x1B:
-                if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank"):
+                if self.panel.tools_open and self.panel.tool_view in ("calculator", "clipboard", "blank", "handwriting"):
+                    if (self.panel.tool_view == "handwriting" and self.panel.handwriting and
+                            self.panel.handwriting.picker_open):
+                        self.panel.handwriting.close_picker()
+                        self.draw_content()
+                        self.frame_dirty = True
+                        return 0
                     if self.panel.tool_view == "calculator" and self.panel.calculator_menu:
                         self.click("calcmenu:close", 0)
                     elif self.panel.tool_view == "calculator" and self.panel.calculator_history:
@@ -5117,6 +5459,13 @@ class App:
                     step = -1 if ctypes.c_short(wp >> 16).value > 0 else 1
                     if getattr(self, "clipboard", None):
                         self.clipboard.move_page(step)
+                    self.draw_content()
+                    self.frame_dirty = True
+                    return 0
+                if (self.panel.tools_open and self.panel.tool_view == "handwriting" and
+                        getattr(self.panel.handwriting, "picker_open", False)):
+                    step = -1 if ctypes.c_short(wp >> 16).value > 0 else 1
+                    self.panel.handwriting.move_browse_page(step)
                     self.draw_content()
                     self.frame_dirty = True
                     return 0

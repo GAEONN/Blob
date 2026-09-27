@@ -8,10 +8,10 @@ colors:
 
 # Design System: Blob Dashboard
 
-v5 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
-shared settings/controllers and a mode-dependent shader anchor. The shared v5 profile lives
+v6 integration: visual geometry is unchanged. `../unified.py` hosts both presentations with
+shared settings/controllers and a mode-dependent shader anchor. The established v5 profile lives
 in `%LOCALAPPDATA%\Blob-v5`, uses the `Local\BlobUnified-v5` mutex, and defaults to
-Ctrl+Alt+V (or a migrated custom binding); see ../docs/V5-NOTES.md.
+Ctrl+Alt+V (or a migrated custom binding); see ../docs/V6-NOTES.md.
 
 ## Overview
 
@@ -53,7 +53,7 @@ The inherited 34 outer radius with an 18 inset yields 16-radius cards. Artwork i
 
 **Keyboard controls.** Tab/Shift+Tab cycle registered targets when visible and unlocked, excluding decorative artwork/gesture regions. Focus has a persistent full-coverage inset outline independent of hover. Enter/Space activates focused non-slider controls; Search keeps text entry. Focused sliders use Left/Right steps of 0.02 and Home/End endpoints, clamped to [0,1]. Seek commits its position; Glass and sound adjustments persist through their existing handlers. F11 resizes the overview; Escape exits an unlocked dock. The dock starts click-through, with Ctrl+Alt+V as the default configurable lock chord. Its satellite expands, top chevron collapses, and Blob returns to the overview. Dashboard disables bubble dragging; it uses the system pointer.
 
-**Unified v5 shell.** Dashboard runs inside the same `Blob v5` process as SmallBlob. It shares
+**Unified v6 shell.** Dashboard runs inside the same `Blob v6` process as SmallBlob. It shares
 the tray, `%LOCALAPPDATA%\Blob-v5` settings, `Local\BlobUnified-v5` mutex, monitor, media
 session, audio controller and gaming telemetry. `dashboard/app.pyw` requests the Dashboard
 view from `../app.pyw`; it does not create a second engine. See PRODUCT.md for shared

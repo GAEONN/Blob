@@ -54,7 +54,7 @@ function Stop-BlobProcess([string]$Root) {
 }
 
 Write-Host ''
-Write-Host 'Blob v5 installer' -ForegroundColor White
+Write-Host 'Blob v6 installer' -ForegroundColor White
 Write-Host 'Core app + FPS + universal sensors + system-wide audio' -ForegroundColor DarkGray
 Write-Host ''
 
@@ -64,6 +64,7 @@ $temporaryDownload = $null
 if ($localCheckout) {
     $installRoot = $PSScriptRoot
 } else {
+    # Keep the established folder so v6 updates v5 in place instead of creating a second app.
     $installRoot = Join-Path $env:LocalAppData 'Programs\Blob-v5'
 }
 

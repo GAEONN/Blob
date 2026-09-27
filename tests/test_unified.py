@@ -165,9 +165,20 @@ class UnifiedTests(unittest.TestCase):
         with patch.object(u.winreg, 'CreateKey'), patch.object(u.winreg, 'QueryValueEx', side_effect=FileNotFoundError), \
                 patch.object(u.winreg, 'SetValueEx') as write:
             u.set_startup(True)
-            self.assertEqual(write.call_args.args[1], 'Blob v5')
+            self.assertEqual(write.call_args.args[1], 'Blob v6')
         self.assertIn('app.pyw', write.call_args.args[-1])
         self.assertNotIn('dashboard\\app.pyw', write.call_args.args[-1])
+
+    def test_instance_mutex_uses_win32_last_error_for_duplicate_detection(self):
+        with patch.object(u.base.k32, 'SetLastError') as set_error, \
+                patch.object(u.base.k32, 'GetLastError', return_value=183) as get_error, \
+                patch.object(u.base.k32, 'CreateMutexW', return_value=123) as create:
+            mutex, already_running = u.acquire_instance_mutex()
+        self.assertEqual(mutex, 123)
+        self.assertTrue(already_running)
+        set_error.assert_called_once_with(0)
+        create.assert_called_once_with(None, False, u.MUTEX)
+        get_error.assert_called_once_with()
 
     def test_renderer_anchors_follow_mode(self):
         r = u.UnifiedRenderer.__new__(u.UnifiedRenderer)
@@ -266,7 +277,7 @@ class UnifiedTests(unittest.TestCase):
             'applemusic.py': '0f897814de36386b2633e71502f0df43121c059765ad76dd04bcab5bc4e35efe',
             'gaming.py': '57591f2cda910c9dac62306ac18042ae3e140e68e980388ae1bdb011ffb42e1f',
             'reactive.py': 'f7f641cd1a232576b7bd76d59694a4ee018d96d0625e6f476f003373fb7edc9f',
-                           'blob.pyw': '43a3c15b98b3307fb4a22f48de01fe62e1bb6d98afd964aed7bbf34e196dd207',
+                           'blob.pyw': 'c492aa7dad650bf601eb43fb6c6cab26af76d143dc4a72bb4ba96a823f7ec704',
         }
         for name, digest in expected.items():
             source = (u.ROOT/name).read_text(encoding='utf-8').split('if __name__ == "__main__":')[0]

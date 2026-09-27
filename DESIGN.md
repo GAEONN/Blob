@@ -315,7 +315,7 @@ ellipsized text and optional covers: 42 DIP regular rows include artist captions
 while 34 DIP Compact rows show titles only. Selecting a row targets its title and
 artist in Apple Music rather than relying on a stale queue index.
 
-Current v5 source check: `blob.pyw` and `unified.py` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
+Current v6 source check: `blob.pyw` and `unified.py` (layout, settings, hit targets), `glass.py` (local visualizer and ink),
 `reactive.py` (relative transients), `engine.py` (provider/ID and zero-RPM preservation),
 `docs/V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview artwork is synthetic test material;
 no new shipping raster or multi-PC validation is claimed. Provider and fan-control limits

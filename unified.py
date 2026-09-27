@@ -1,6 +1,6 @@
-"""Blob v5: two presentations, one window and one set of live controllers.
+"""Blob v6: two presentations, one window and one set of live controllers.
 
-The SmallBlob layout stays stable. This adapter owns mode switching and the v5 profile.
+The SmallBlob layout stays stable. This adapter owns mode switching and preserves the v5 profile.
 """
 import argparse
 import ctypes
@@ -14,10 +14,32 @@ from dashboard import dashboard as dash
 
 base, engine, glass, user32 = dash.base, dash.engine, dash.glass, dash.user32
 ROOT = Path(__file__).resolve().parent
-APP_NAME = 'Blob v5'
-LEGACY_APP_NAMES = ('Blob', 'Blob v3', 'Blob v4')  # older builds' Run values; left behind they launch Blob twice
+# Keep the v5 mutex and profile path so upgrading cannot start a parallel Blob
+# or strand settings, calculator history, or private handwriting profiles.
+APP_NAME = 'Blob v6'
+LEGACY_APP_NAMES = ('Blob', 'Blob v3', 'Blob v4', 'Blob v5')  # remove older startup entries when enabling v6
 MUTEX = 'Local\\BlobUnified-v5'
 SMALL, FULL, DOCK, OPEN = 0x8010, 0x8011, 0x8012, 0x8013
+
+
+def acquire_instance_mutex():
+    """Return this process' mutex handle and whether another Blob owns it."""
+    k32 = base.k32
+    k32.CreateMutexW.restype = base.wintypes.HANDLE
+    k32.CreateMutexW.argtypes = [base.wintypes.LPVOID, base.wintypes.BOOL, base.wintypes.LPCWSTR]
+    k32.SetLastError.argtypes = [base.wintypes.DWORD]
+    k32.SetLastError.restype = None
+    k32.GetLastError.argtypes = []
+    k32.GetLastError.restype = base.wintypes.DWORD
+    k32.CloseHandle.argtypes = [base.wintypes.HANDLE]
+
+    # ctypes.windll does not populate ctypes.get_last_error(); use the Win32
+    # thread error directly, clearing it immediately before CreateMutexW.
+    k32.SetLastError(0)
+    mutex = k32.CreateMutexW(None, False, MUTEX)
+    if not mutex:
+        raise ctypes.WinError()
+    return mutex, k32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
 
 
 def initial_config(local_app_data):
@@ -287,7 +309,7 @@ class UnifiedApp(dash.DashboardApp):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Blob v5: SmallBlob and Dashboard')
+    parser = argparse.ArgumentParser(description='Blob v6: SmallBlob and Dashboard')
     parser.add_argument('--view', choices=('small', 'dashboard'))
     parser.add_argument('--startup', action='store_true')
     args = parser.parse_args()
@@ -295,17 +317,8 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except OSError:
         pass
-    base.k32.CreateMutexW.restype = base.wintypes.HANDLE
-    base.k32.CreateMutexW.argtypes = [base.wintypes.LPVOID, base.wintypes.BOOL, base.wintypes.LPCWSTR]
-    base.k32.CloseHandle.argtypes = [base.wintypes.HANDLE]
-    # CreateMutex only guarantees ERROR_ALREADY_EXISTS when the named mutex
-    # was already present. Clear the thread error first so a stale Win32 error
-    # from DPI/device setup cannot make a fresh launch exit immediately.
-    ctypes.set_last_error(0)
-    mutex = base.k32.CreateMutexW(None, False, MUTEX)
-    if not mutex:
-        raise ctypes.WinError()
-    if ctypes.get_last_error() == 183:
+    mutex, already_running = acquire_instance_mutex()
+    if already_running:
         user32.FindWindowW.restype = base.wintypes.HWND
         user32.FindWindowW.argtypes = [base.wintypes.LPCWSTR, base.wintypes.LPCWSTR]
         hwnd = user32.FindWindowW('BlobGlass', APP_NAME)

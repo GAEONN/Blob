@@ -38,7 +38,7 @@ It takes about 5 minutes. You don't need to know anything about coding.
 3. A black window shows the progress. When Windows asks *"Do you want to allow this app to make
    changes?"*, click **Yes** â€” this installs the optional sensor, sound and FPS helpers.
 
-Blob opens by itself when it's done, and a **Blob v5** icon appears on your desktop.
+Blob opens by itself when it's done, and a **Blob v6** icon appears on your desktop.
 **Restart your PC once** afterwards so the sound and FPS features finish setting up.
 
 <details>
@@ -75,14 +75,15 @@ The [feature guide](#feature-guide) below explains every button.
 ## Update to the newest version
 
 **[Download Update-Blob.cmd](https://github.com/GAEONN/Blob/releases/latest/download/Update-Blob.cmd)** and double-click it.
-It closes Blob, installs the latest version, keeps all your settings, and opens Blob again.
+It closes Blob, updates the existing installation in place, keeps all your settings and private
+profiles, and opens Blob again. It does not create a second Blob installation.
 
 ## Uninstall
 
 1. Right-click the Blob icon near the clock â†’ turn off **Start with Windows** â†’ **Exit Blob**.
 2. Open File Explorer, paste `%LOCALAPPDATA%\Programs` into the address bar, press Enter, and delete
    the **Blob-v5** folder. Do the same for `%LOCALAPPDATA%` and its **Blob-v5** folder (your settings).
-3. Delete the **Blob v5** shortcut from your desktop.
+3. Delete the **Blob v6** shortcut from your desktop.
 
 Optional helpers the installer may have added (safe to keep, or remove if you like):
 the **Blob Sensors** task in *Task Scheduler*, **PawnIO** in *Settings â†’ Apps*, and the
@@ -102,7 +103,7 @@ warning for the installer only because it isn't a paid, signed app.
 <summary><b>I installed it but I can't see Blob.</b></summary>
 
 Click the small **^** arrow near the clock and click the Blob icon. If there's no icon, double-click
-the **Blob v5** shortcut on your desktop.
+the **Blob v6** shortcut on your desktop.
 </details>
 
 <details>
@@ -242,6 +243,18 @@ the routed 28-band spectrum when available; otherwise it watches every active Wi
 endpoint and derives level/transient motion. Bass expands the body, mids flex the fused neck, and
 treble moves the satellite. This works without enabling Blob's Sound enhancement.
 
+### Your handwriting stays yours
+
+Open **Tools → Handwriting → My writing** to create a profile for the handwriting tool. Blob gives
+you three practice sheets and explains how to fill and photograph them; each character is written
+six times so the local profile can retain six distinct glyph samples. Choose each image in Blob's
+own Downloads browser; the original photos remain where you saved them. Blob extracts letter shapes
+locally and stores the resulting private profile under `%LOCALAPPDATA%\Blob-v5\handwriting`.
+The profile and generated documents stay on that PC. No samples, photos, or personal glyphs are
+included in the repository or sent to a handwriting service. Only the reusable worksheet and
+generic on-device processing code are part of Blob. Keep your profile private and do not commit or
+share it as part of a bug report.
+
 ### Sound
 
 Sound is optional. When enabled, Windows audio is routed through VB-CABLE into Blob's separate DSP
@@ -287,7 +300,7 @@ avoid recursive self-capture.
 
 Blob is written in Python with OpenGL and native Win32 APIs â€” no browser window and no Electron.
 SmallBlob and the Dashboard are two views of one app: they share one window, tray icon, audio
-engine, media session, sensor monitor and settings. See [docs/V5-NOTES.md](docs/V5-NOTES.md).
+engine, media session, sensor monitor and settings. See [docs/V6-NOTES.md](docs/V6-NOTES.md).
 
 ### Alternative installation
 
@@ -352,7 +365,7 @@ Key files:
 
 | File | Responsibility |
 | --- | --- |
-| [`unified.py`](unified.py) | Single-instance host, shared controllers, view switching, v5 settings |
+| [`unified.py`](unified.py) | Single-instance host, shared controllers, view switching, v6 settings |
 | [`dashboard/dashboard.py`](dashboard/dashboard.py) | Full overview and downward-expanding gaming dock |
 | [`blob.pyw`](blob.pyw) | Window lifecycle, layout, animation, input, and view behavior |
 | [`glass.py`](glass.py) | Desktop capture, signed-distance shader, refraction, and layered-window output |
@@ -363,7 +376,7 @@ Key files:
 | [`applemusic.py`](applemusic.py) | Optional Apple Music search, queue, and playback integration |
 | [`DESIGN.md`](DESIGN.md) | Visual system, shader model, interaction rules, and spring behavior |
 | [`PRODUCT.md`](PRODUCT.md) | Product behavior and feature contract |
-| [`docs/`](docs) | Release notes for v3â€“v5, screenshots, and the original build brief |
+| [`docs/`](docs) | Release notes for v3â€“v6, screenshots, and the original build brief |
 
 ### Current limitations
 
@@ -378,8 +391,8 @@ Key files:
 
 ## Older versions
 
-Every earlier version is kept on the [Releases](https://github.com/GAEONN/Blob/releases) page and as
-[tags](https://github.com/GAEONN/Blob/tags): **v3.0.0**, **v3.1.0**, **v4.0.0**, **v5.0.0**, plus the archived
+Earlier releases remain on the [Releases](https://github.com/GAEONN/Blob/releases) page and as
+[Git tags](https://github.com/GAEONN/Blob/tags), including the preserved v3–v5 history and the
 `archive-before-yao` and `archive-v4-merged-refraction` snapshots.
 
 ## License

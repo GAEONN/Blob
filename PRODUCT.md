@@ -1,12 +1,13 @@
 # Blob
 
-## v5 application host
+## v6 application host
 
 `app.pyw` / `unified.py` pair the SmallBlob layouts below with the full Dashboard in one
 process and one native window. Tray mode commands or local F10 switch presentations without
-recreating audio/media/telemetry controllers. The app uses a single `%LOCALAPPDATA%\Blob-v5`
-profile, isolated from legacy versions. Shared options carry across views; layout state stays
-per-view. Dashboard's game dock starts locked. See [V5-NOTES.md](docs/V5-NOTES.md) for release,
+recreating audio/media/telemetry controllers. The app retains the established
+`%LOCALAPPDATA%\Blob-v5` profile during the v6 in-place upgrade, preserving settings and private
+tool data without creating another install. Shared options carry across views; layout state stays
+per-view. Dashboard's game dock starts locked. See [V6-NOTES.md](docs/V6-NOTES.md) for release,
 installation and verification boundaries. The SmallBlob behavior descriptions below apply
 within the compact presentation unless explicitly overridden by this host contract.
 
@@ -112,7 +113,7 @@ retained; deduplication uses provider plus sensor ID, so equal labels or RPM do 
 distinct sensors. A stopped fan remains 0 RPM; missing and invalid readings remain unavailable.
 This source contains no fan-control writes; mode choices are monitoring preferences.
 
-Current v5 evidence: `blob.pyw`, `unified.py`, `glass.py`, `reactive.py`, `engine.py`,
+Current v6 evidence: `blob.pyw`, `unified.py`, `glass.py`, `reactive.py`, `engine.py`,
 `docs/V4-NOTES.md` and `.impeccable/surfaces/blob-pyw.md`. Preview art and telemetry are synthetic test fixtures, not new
 shipping assets. Provider fixtures and the reported local ASUS check are not multi-PC testing
 or certification. This documentation reconciliation adds no runtime validation claim.

@@ -1,6 +1,6 @@
 # Blob 4.0.1 — Archived paired-view release
 
-This is the preserved v4 release note. Blob v5 is the current release; see [V5-NOTES.md](V5-NOTES.md).
+This is the preserved v4 release note. Blob v6 is the current release; see [V6-NOTES.md](V6-NOTES.md).
 
 SmallBlob v3 and the large Dashboard are now two views of **one running application**.
 One tray icon, native window, monitor, audio controller, music session and FPS monitor are

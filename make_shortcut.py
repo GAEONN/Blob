@@ -6,7 +6,7 @@ import sys
 from PIL import Image, ImageDraw
 
 here = os.path.dirname(os.path.abspath(__file__))
-ico = os.path.join(here, "blob-v5-glass.ico")
+ico = os.path.join(here, "blob-glass.ico")
 
 S = 256
 img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -21,12 +21,19 @@ pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
 target = os.path.join(here, "app.pyw")
 ps = f"""
 $d = [Environment]::GetFolderPath('Desktop')
-$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Blob v5.lnk'))
+$wsh = New-Object -ComObject WScript.Shell
+$oldPath = Join-Path $d 'Blob v5.lnk'
+if (Test-Path -LiteralPath $oldPath) {{
+    $old = $wsh.CreateShortcut($oldPath)
+    if ([IO.Path]::GetFullPath($old.WorkingDirectory) -ieq [IO.Path]::GetFullPath('{here}') -and
+        $old.Arguments -like '*app.pyw*') {{ Remove-Item -LiteralPath $oldPath -Force }}
+}}
+$s = $wsh.CreateShortcut((Join-Path $d 'Blob v6.lnk'))
 $s.TargetPath = '{pythonw}'
 $s.Arguments = '"{target}"'
 $s.WorkingDirectory = '{here}'
 $s.IconLocation = '{ico}'
-$s.Description = 'Blob v5 - SmallBlob and Dashboard in one app (F10 switches views)'
+$s.Description = 'Blob v6 - SmallBlob and Dashboard in one app (F10 switches views)'
 $s.Save()
 """
 subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)

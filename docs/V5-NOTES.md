@@ -2,6 +2,7 @@
 
 Blob v5 keeps the paired SmallBlob and Dashboard host while updating the compact utility layer.
 The release is tagged `v5.0.0`; the earlier `v4.0.1` and `v3.0.0` tags remain intact.
+This remains the historical v5 release record; v6 supersedes it.
 
 ## What changed
 
