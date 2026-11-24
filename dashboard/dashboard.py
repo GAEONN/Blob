@@ -360,7 +360,9 @@ class DashboardApp(base.App):
         # Keep the full app and detached dock on one stable 60 FPS cadence.
         want=16
         if self.interval!=want:
-            self.interval=want;user32.SetTimer(self.hwnd,1,want,None)
+            self.interval=want
+            if getattr(self,'pacer',None):self.pacer.start()
+            else:user32.SetTimer(self.hwnd,1,want,None)
 
     def show(self):
         work,_=base.work_area_at(*base.cursor_pos())
@@ -393,29 +395,31 @@ class DashboardApp(base.App):
         if crossfade:
             self.old_controls=self.controls
             self.glass.set_content(ink,accent,self.panel.pic)
-            f=self.springs.get('fade',1,k=190,zeta=1)
+            f=self.springs.get('fade',1,k=base.FADE_K,zeta=base.FADE_Z)
             f.x,f.v,f.target=0,0,1
         else:self.glass.replace_content(ink,accent,self.panel.pic)
         self.controls=controls
         for name,value in (('height',self.panel.height()),('width',self.panel.w)):
-            self.springs.get(name,value,k=230,zeta=.94).target=value
+            self.springs.get(name,value,k=base.LAYOUT_K,zeta=base.LAYOUT_Z).target=value
         self.frame_dirty=True
 
     def _frame(self):
         now=time.perf_counter()
         # Mouse messages also enter frame(); enforce the same budget there.
-        if now-self.last_frame < 1/60:return
+        # (tolerance below 1/60: a tick arriving 0.1 ms early must not drop a frame)
+        if now-self.last_frame < 1/75:return
         self.update_gaming_modifier_drag()
         dt=min(.05,now-self.last_frame);self.last_frame=now
         self.springs.step(dt)
         fade=self.springs.get('fade',1).x
         width=self.springs.get('width',self.panel.w)
         height=self.springs.get('height',self.panel.height())
-        morph=self.springs.get('dashboard_dock',0,k=230,zeta=.94)
+        morph=self.springs.get('dashboard_dock',0,k=base.LAYOUT_K,zeta=base.LAYOUT_Z)
         morph.target=float(self.panel.dock and not self.panel.dock_open)
         self.sound.heartbeat()
         self.sound.set_reactive_active(not self.panel.dock and self.panel.options.get('musicreactive',True))
-        if now-self.last_dashboard_text > .5 and not self.slider_drag:
+        # live text refresh waits until nothing is moving, so it never hitches an animation
+        if now-self.last_dashboard_text > .5 and not self.slider_drag and not self._layout_animating():
             self.last_dashboard_text=now
             self.draw_content()
         if not self.panel.dock and self.panel.music_view=='queue' and now-self.last_queue>10:
@@ -466,7 +470,7 @@ class DashboardApp(base.App):
         self.old_controls=[]
         for key,value in (('width',self.panel.w),('height',self.panel.height()),
                           ('dashboard_dock',float(self.panel.dock and not self.panel.dock_open)),('fade',1)):
-            sp=self.springs.get(key,value,k=230,zeta=.94);sp.x=sp.target=value;sp.v=0
+            sp=self.springs.get(key,value,k=base.LAYOUT_K,zeta=base.LAYOUT_Z);sp.x=sp.target=value;sp.v=0
         self.draw_content()
         self.last_frame=0
         if self.captureable and self.visible:self.refresh_backdrop()

@@ -266,6 +266,10 @@ class UnifiedApp(dash.DashboardApp):
         self.sound_top = self.glass.panel_y(round(sound_card_h * self.S))
         self.controls, self.old_controls = [], []
         self.springs = base.Springs()
+        # same motion for both axes in both views (see LAYOUT_K in blob.pyw)
+        self.springs.get('width', self.panel.w, k=base.LAYOUT_K, zeta=base.LAYOUT_Z)
+        self.springs.get('height', self.panel.height(None) if not self.full else self.panel.height(),
+                         k=base.LAYOUT_K, zeta=base.LAYOUT_Z)
         self.drag = self.drag_click = self.drag_origin = self.slider_drag = self.pressed = None
         self.hover = self.mouse_xy = self.attached = self.detaching = None
         self.drag_moved = self.mouse_in = False
@@ -288,6 +292,18 @@ class UnifiedApp(dash.DashboardApp):
             self.show()
 
     def wndproc(self, hwnd, msg, wp, lp):
+        if msg == base.WM_TIMER and wp == 1:
+            # Frame clock for both views (FramePacer). Always acknowledge the
+            # tick, even when hidden, so the pacer never stalls.
+            if getattr(self, 'pacer', None):
+                self.pacer.delivered()
+            if self.visible:
+                try:
+                    self.frame()
+                except Exception:
+                    import traceback
+                    engine.log('frame: ' + traceback.format_exc())
+            return 0
         if msg == OPEN:
             self.show()
             return 0

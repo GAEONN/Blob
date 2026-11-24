@@ -14,13 +14,13 @@ are glass lenses: each one bends the background along its own squircle outline.
 """
 import ctypes
 import math
+import threading
 import time
 from ctypes import wintypes
 from functools import lru_cache
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
-from scipy import ndimage
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32")
@@ -134,6 +134,7 @@ def squircle_field(w, h, r, smoothing=0.6):
     key = (int(w), int(h), round(r, 2), smoothing)
     if key in _field_cache:
         return _field_cache[key]
+    from scipy import ndimage  # ~0.4 s to import; only this (rarely used) helper needs it
     w, h = max(2, int(w)), max(2, int(h))
     k = 4
     hi = Image.new("L", (w * k, h * k), 0)
@@ -239,6 +240,7 @@ uniform vec4 backdrop_color4;
 uniform vec4 backdrop_color5;
 uniform vec2 light;
 uniform float S, glassiness;
+uniform float ink_mode;               // 0 = white ink, 1 = dark ink (eased on the CPU)
 uniform int n_lens;
 uniform vec4 L_rect[96];  // x0 y0 x1 y1 (panel px)
 uniform vec4 L_a[96];     // radius, strength, bevel, zoom
@@ -717,32 +719,11 @@ void main() {
         col = mix(col, reading, coverage);
     }
 
-    // Text must contrast with the glass it sits on. A white-to-black blend by the scenery gave
-    // grey text on mid-tone wallpapers, so ink is pure white or near-black, chosen from the glass
-    // estimated across the panel's width at this row (a vertical wallpaper edge never splits a
-    // word), or from the scenery right here where it differs sharply (a white window beside a
-    // dark wallpaper). Between 0.44 and 0.52 luma either ink reaches >= 3.75:1, so there every
-    // row follows one panel-wide choice; lines only switch where the glass is clearly lighter
-    // or darker, never mid-line on a gentle gradient. Edges are antialiased over one pixel.
-    float row_l = 0.0, panel_l = 0.0;
-    for (int k = 0; k < 5; k++) {
-        float fx = panel_pos.x + panel_size.x * (0.1 + 0.2 * float(k));
-        row_l += luma(at(vec2(fx, w.y) + cap_origin, 7.0)) * 0.2;
-        for (int j = 0; j < 3; j++)
-            panel_l += luma(at(vec2(fx, panel_pos.y + panel_size.y * (0.2 + 0.3 * float(j))) + cap_origin, 7.0)) / 15.0;
-    }
-    float here_l = luma(at(p, 6.0));
-    float region = mix(row_l, here_l, smoothstep(0.12, 0.22, abs(here_l - row_l)));
-    // Buttons carry their own frosted/colour tint (above); estimate it from the same row-level
-    // scenery so a label reads against the button it sits on, not the bare glass.
-    float rd = smoothstep(0.50, 0.66, region);
-    float glass_l = mix(glassOver(region, push), luma(mix(tint_dark_scene, tint_bright_scene, rd)),
-                        clamp(mix(lift, mix(lift * 1.2, 0.55 + lift, raised), rd) * 0.72, 0.0, 0.72));
-    glass_l = mix(glass_l, luma(tint * mix(1.0, 0.85, rd)), clamp(tint_a, 0.0, 1.0));
-    float glass_aa = max(fwidth(glass_l), 1e-4);
-    float clearly_light = smoothstep(0.52 - glass_aa, 0.52 + glass_aa, glass_l);
-    float clearly_dark = 1.0 - smoothstep(0.44 - glass_aa, 0.44 + glass_aa, glass_l);
-    dark = mix(mix(step(0.48, glassOver(panel_l, push)), 1.0, clearly_light), 0.0, clearly_dark);
+    // Text is pure white or near-black, ONE choice for the whole panel. Choosing per row (or
+    // per spot) made a single panel mix white and black lines over a two-tone wallpaper and
+    // flip line by line as windows moved behind it. The renderer picks ink_mode from the
+    // average glass behind the panel, with hysteresis, and eases it over ~0.3 s.
+    dark = ink_mode;
 
     // Album artwork is opaque: text must contrast with the cover, not the desktop.
     float ink_dark = mix(dark, smoothstep(.45, .65, dot(col, vec3(.2126, .7152, .0722))), pic.a);
@@ -786,6 +767,16 @@ class ScreenSource:
         self.frames = {}
         self.frozen = False
         self.screen_dc = user32.GetDC(None)
+        # A DXGI readback costs 5–30 ms (it waits for the GPU copy). Done on the UI thread that
+        # was the remaining animation stutter, so while the panel stands still a worker grabs
+        # the next frame in the background and the UI only copies the finished pixels (~0.5 ms).
+        self._lock = threading.Lock()        # one user of DXGI/GDI at a time
+        self._res_lock = threading.Lock()
+        self._want = None                    # rect the UI wants refreshed
+        self._ready = None                   # (rect, pixels) finished by the worker
+        self._work = None
+        self._kick = threading.Event()
+        threading.Thread(target=self._worker, name="GlassCapture", daemon=True).start()
         try:
             import dxcam
             for i in range(8):
@@ -802,11 +793,56 @@ class ScreenSource:
 
     def grab(self, x, y, w, h, out, moved):
         """Fill out[:h, :w] with the screen rect at (x, y) if anything changed. Returns True when the
-        pixels are new. Only the panel's own rectangle is copied out of the GPU frame."""
+        pixels are new. Only the panel's own rectangle is copied out of the GPU frame.
+
+        Moving/resizing grabs synchronously so the refraction stays aligned with the panel; a
+        still panel takes the worker's latest frame (at most one frame old) without blocking."""
         x, y = int(round(x)), int(round(y))
         w, h = max(1, int(round(w))), max(1, int(round(h)))
         if self.frozen:
             return False
+        rect = (x, y, w, h)
+        if not hasattr(self, "_res_lock"):  # constructed without __init__ (tests): stay synchronous
+            return self._grab_now(x, y, w, h, out, moved)
+        if moved or not self.outputs:
+            with self._res_lock:
+                self._ready = None
+            self._want = rect
+            with self._lock:
+                return self._grab_now(x, y, w, h, out, moved)
+        self._want = rect
+        fresh = False
+        with self._res_lock:
+            if self._ready is not None and self._ready[0] == rect:
+                out[:h, :w] = self._ready[1]
+                self._ready, fresh = None, True
+        self._kick.set()
+        return fresh
+
+    def _worker(self):
+        while True:
+            self._kick.wait()
+            self._kick.clear()
+            rect = self._want
+            if rect is None or self.frozen:
+                continue
+            x, y, w, h = rect
+            if self._work is None or self._work.shape[:2] != (h, w):
+                self._work = np.empty((h, w, 4), np.uint8)
+            try:
+                with self._lock:
+                    changed = self._grab_now(x, y, w, h, self._work, False)
+            except Exception:
+                changed = False
+            if changed and self._want == rect:
+                with self._res_lock:
+                    old = self._ready
+                    self._ready = (rect, self._work)
+                    # recycle the buffer the UI never consumed
+                    self._work = old[1] if old is not None and old[1].shape == self._work.shape else None
+
+    def _grab_now(self, x, y, w, h, out, moved):
+        """The synchronous grab (caller holds self._lock)."""
         cx, cy = x + w // 2, y + h // 2
         for l, t, r, b, cam in self.outputs:
             if l <= cx < r and t <= cy < b:
@@ -900,11 +936,11 @@ class GlassRenderer:
         self.accs = [None, None]
         self.pics = [None, None]
         self.backdrops = [None, None]
-        # The app's 16 ms native timer is the 60 FPS presentation rail. Give
-        # the capture gate a small tolerance below 1/60 so consecutive timer
-        # ticks do not alternate into a visibly choppy 30 FPS cadence.
+        # The app's FramePacer is the 60 FPS presentation rail. Give the
+        # capture gate a generous tolerance below 1/60 so pacer jitter never
+        # skips a capture and alternates into a visibly choppy 30 FPS cadence.
         # Keep the slower fallback conservative so it does not steal CPU.
-        self.capture_min_interval = (1.0 / 64.0
+        self.capture_min_interval = (1.0 / 75.0
                                      if getattr(self.source, "outputs", ()) else 1.0 / 30.0)
         self._last_capture = 0.0
         self._bg_dirty = True
@@ -991,17 +1027,38 @@ class GlassRenderer:
                 lst[0], lst[1] = lst[1], t
         self._last_key = None
 
-    def replace_content(self, ink, accent, pic=None, backdrop=None):
-        """Refresh the current content in place (live numbers) without a crossfade."""
-        ink_a, acc_a, pic_a, backdrop_a = self._textures(ink, accent, pic, backdrop)
-        h, w = ink_a.shape[:2]
-        if self.inks[1] is None or self.inks[1].size != (w, h):
+    @staticmethod
+    def _raw(layer, mode):
+        """Bytes for a texture upload. PIL images go straight to bytes; going through numpy
+        first encoded every layer twice (~1.5 ms each)."""
+        if isinstance(layer, Image.Image) and layer.mode == mode:
+            return layer.tobytes()
+        return np.ascontiguousarray(np.asarray(layer, np.uint8)).tobytes()
+
+    def replace_content(self, ink, accent, pic=None, backdrop=None, same_pic=False):
+        """Refresh the current content in place (live numbers) without a crossfade.
+
+        Empty layers are uploaded once, not every refresh; ``same_pic`` skips the
+        picture layer when the caller knows it did not change."""
+        w, h = ink.size if isinstance(ink, Image.Image) else (ink.shape[1], ink.shape[0])
+        if self.inks[1] is None or self.inks[1].size != (w, h) or any(
+                lst[1] is None for lst in (self.accs, self.pics, self.backdrops)):
             return self.set_content(ink, accent, pic, backdrop, instant=True)
-        self.inks[1].write(ink_a.tobytes())
+        blank = getattr(self, "_blank_layers", {})
+        self._blank_layers = blank
+        self.inks[1].write(self._raw(ink, "L"))
         self.inks[1].build_mipmaps()
-        self.accs[1].write(acc_a.tobytes())
-        self.pics[1].write(pic_a.tobytes())
-        self.backdrops[1].write(backdrop_a.tobytes())
+        for name, tex, layer, skip in (("acc", self.accs[1], accent, False),
+                                       ("pic", self.pics[1], pic, same_pic),
+                                       ("back", self.backdrops[1], backdrop, False)):
+            if layer is None:
+                if blank.get(name) is not tex:
+                    tex.write(bytes(w * h * 4))
+                    blank[name] = tex
+                continue
+            blank.pop(name, None)
+            if not skip:
+                tex.write(self._raw(layer, "RGBA"))
         self._last_key = None
 
     def set_panel_shape(self, morph):
@@ -1174,6 +1231,46 @@ class GlassRenderer:
         soft = np.mean([pad[i:i + t.shape[0], j:j + t.shape[1]] for i in range(3) for j in range(3)], axis=0)
         return soft.astype(np.float32)
 
+    @staticmethod
+    def scene_luma(cap, x, y, w, h):
+        """Average luma (0..1) of the scenery behind the panel, from a sparse sample."""
+        region = cap[max(0, y):max(0, y) + max(0, h):12, max(0, x):max(0, x) + max(0, w):12, :3]
+        if region.size == 0:
+            return 0.3
+        bgr = region.reshape(-1, 3).astype(np.float32) / 255.0
+        return float((bgr @ np.array([0.114, 0.587, 0.299], np.float32)).mean())
+
+    def _update_ink_mode(self, glassiness):
+        """One ink colour for the panel: dark only over clearly light glass, white only over
+        clearly dark glass, and in between keep whatever it was (no flicker on mid tones)."""
+        r = float(getattr(self, "_scene_l", 0.3))
+        push = 0.10 + 0.32 * float(glassiness)
+        d = min(1.0, max(0.0, (r - 0.50) / 0.16))
+        d = d * d * (3 - 2 * d)
+        glass_l = (r * (1 - push * (1 - d))) * (1 - (push + 0.08) * d) + (push + 0.08) * d
+        target = getattr(self, "_ink_target", 0.0)
+        if target < 0.5 and glass_l > 0.60:
+            target = 1.0
+        elif target > 0.5 and glass_l < 0.42:
+            target = 0.0
+        self._ink_target = target
+        now = time.perf_counter()
+        dt = min(0.1, now - getattr(self, "_ink_t", now))
+        self._ink_t = now
+        mode = getattr(self, "_ink_mode", target)
+        mode += (target - mode) * min(1.0, dt / 0.12)   # ~0.3 s to settle
+        if abs(target - mode) < 0.01:
+            mode = target
+        self._ink_mode = mode
+        try:
+            self.prog["ink_mode"].value = float(mode)
+        except KeyError:
+            pass
+
+    @property
+    def ink_animating(self):
+        return abs(getattr(self, "_ink_target", 0.0) - getattr(self, "_ink_mode", 0.0)) > 0.0
+
     def _upload_busy(self, busy):
         """Upload the eased busy map (row 0 = top, like the capture and ``pp``)."""
         data = np.ascontiguousarray(busy, np.float32)
@@ -1210,6 +1307,7 @@ class GlassRenderer:
         t0 = time.perf_counter()
         if self._bg_dirty or self._bg_uploaded != (cw, ch):
             self._busy_target = self.scene_busy(cap, px + M - sp, M, pw, h)
+            self._scene_l = self.scene_luma(cap, px + M - sp, M, pw, h)
             self.bg.write(cap[:ch], viewport=(0, 0, cw, ch))
             self.bg.build_mipmaps()
             self._bg_dirty = False
@@ -1243,6 +1341,7 @@ class GlassRenderer:
         pr["panel_size"].value = (float(pw), float(h))
         pr["light"].value = tuple(float(v) for v in light)
         pr["glassiness"].value = float(glassiness)
+        self._update_ink_mode(glassiness)
         # Ease the busy estimate so dragging across windows fades the frost in
         # and out instead of popping it frame to frame.
         now = time.perf_counter()

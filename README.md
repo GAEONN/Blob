@@ -38,7 +38,7 @@ It takes about 5 minutes. You don't need to know anything about coding.
 3. A black window shows the progress. When Windows asks *"Do you want to allow this app to make
    changes?"*, click **Yes** â€” this installs the optional sensor, sound and FPS helpers.
 
-Blob opens by itself when it's done, and a **Blob v6** icon appears on your desktop.
+Blob opens by itself when it's done, and a **Blob** icon appears on your desktop.
 **Restart your PC once** afterwards so the sound and FPS features finish setting up.
 
 <details>
@@ -83,7 +83,7 @@ profiles, and opens Blob again. It does not create a second Blob installation.
 1. Right-click the Blob icon near the clock â†’ turn off **Start with Windows** â†’ **Exit Blob**.
 2. Open File Explorer, paste `%LOCALAPPDATA%\Programs` into the address bar, press Enter, and delete
    the **Blob-v5** folder. Do the same for `%LOCALAPPDATA%` and its **Blob-v5** folder (your settings).
-3. Delete the **Blob v6** shortcut from your desktop.
+3. Delete the **Blob** shortcut from your desktop.
 
 Optional helpers the installer may have added (safe to keep, or remove if you like):
 the **Blob Sensors** task in *Task Scheduler*, **PawnIO** in *Settings â†’ Apps*, and the
@@ -103,7 +103,7 @@ warning for the installer only because it isn't a paid, signed app.
 <summary><b>I installed it but I can't see Blob.</b></summary>
 
 Click the small **^** arrow near the clock and click the Blob icon. If there's no icon, double-click
-the **Blob v6** shortcut on your desktop.
+the **Blob** shortcut on your desktop.
 </details>
 
 <details>

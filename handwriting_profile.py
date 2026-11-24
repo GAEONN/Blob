@@ -18,7 +18,6 @@ import uuid
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from scipy import ndimage
 
 
 APPDATA = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -142,6 +141,7 @@ def create_training_pdf(profile_home=PROFILE_HOME):
 
 
 def _component_markers(image):
+    from scipy import ndimage  # lazy: keeps Blob's launch fast
     thumb = image.convert("L")
     if max(thumb.size) > 1600:
         scale = 1600 / max(thumb.size)
@@ -246,6 +246,7 @@ def _otsu(gray):
 
 
 def _read_sample(page, rect, baseline):
+    from scipy import ndimage  # lazy: keeps Blob's launch fast
     x0, y0, x1, y1 = rect
     crop = page.crop((x0, y0, x1, y1)).convert("L")
     gray = np.asarray(crop)

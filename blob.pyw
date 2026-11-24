@@ -23,7 +23,7 @@ import glass
 from applemusic import AppleMusic
 from media import NowPlaying
 from gaming import GamingMonitor
-from sound import PRESET_ORDER, Sound
+from sound import EQ_LABELS, PRESET_ORDER, Sound
 from reactive import AudioMotion
 from toolset import ClipboardController, ToolController
 import admin_gaming
@@ -123,7 +123,105 @@ DRAG_MONITOR_TRANSFER_DIP = 24
 # Present at a stable 60 FPS.  Expensive Pillow texture updates are coalesced
 # separately so they cannot starve the compositor while a menu spring moves.
 FRAME_PACING_SECONDS = 1.0 / 60.0
-TAB_TEXTURE_SECONDS = 1.0 / 30.0
+# One motion vocabulary, so everything that moves together feels like one object.
+# Panel width, height and card↔bubble morphs share LAYOUT: before, width (240/0.90),
+# height (320/0.86) and morphs (220/0.86) settled at different speeds and the glass
+# visibly skewed while resizing.
+LAYOUT_K, LAYOUT_Z = 260, 0.88     # panel geometry and page morphs
+CONTROL_K, CONTROL_Z = 380, 0.78   # sliding pills and toggle knobs (a small, single bounce)
+PRESS_K, PRESS_Z = 520, 0.68       # every press
+HOVER_K, HOVER_Z = 420, 1.0        # hover lenses: no bounce
+FADE_K, FADE_Z = 240, 1.0
+TAB_TEXTURE_SECONDS = 1.0 / 60.0
+
+
+def _display_period():
+    """One refresh of the primary display (60 Hz → 16.7 ms); 60 FPS for anything faster."""
+    class DEVMODEW(ctypes.Structure):
+        _fields_ = [("dmDeviceName", wintypes.WCHAR * 32), ("dmSpecVersion", wintypes.WORD),
+                    ("dmDriverVersion", wintypes.WORD), ("dmSize", wintypes.WORD),
+                    ("dmDriverExtra", wintypes.WORD), ("dmFields", wintypes.DWORD),
+                    ("_pos", ctypes.c_long * 2), ("dmDisplayOrientation", wintypes.DWORD),
+                    ("dmDisplayFixedOutput", wintypes.DWORD), ("_short", ctypes.c_short * 5),
+                    ("dmFormName", wintypes.WCHAR * 32), ("dmLogPixels", wintypes.WORD),
+                    ("dmBitsPerPel", wintypes.DWORD), ("dmPelsWidth", wintypes.DWORD),
+                    ("dmPelsHeight", wintypes.DWORD), ("dmDisplayFlags", wintypes.DWORD),
+                    ("dmDisplayFrequency", wintypes.DWORD), ("_rest", wintypes.DWORD * 8)]
+    try:
+        dm = DEVMODEW()
+        dm.dmSize = ctypes.sizeof(DEVMODEW)
+        if ctypes.windll.user32.EnumDisplaySettingsW(None, -1, ctypes.byref(dm)):
+            hz = int(dm.dmDisplayFrequency)
+            if 50 <= hz <= 75:
+                return 1.0 / hz
+    except Exception:
+        pass
+    return FRAME_PACING_SECONDS
+
+
+class FramePacer:
+    """Steady frame clock for the glass animations.
+
+    ``SetTimer`` is quantised to the 15.6 ms system tick and WM_TIMER is the
+    lowest-priority message, so a 16 ms timer really fired at ~40 FPS with
+    15/16/31 ms gaps — the visible stutter. This thread sleeps on a
+    high-resolution waitable timer against absolute deadlines and posts the
+    same WM_TIMER(1) the window already handles. At most one tick is queued:
+    a slow frame drops a tick instead of building a backlog."""
+
+    def __init__(self, hwnd, period=None):
+        self.hwnd = hwnd
+        self.period = period or _display_period()
+        self.running = False
+        self.pending = False
+        self._wake = threading.Event()
+        threading.Thread(target=self._run, name="FramePacer", daemon=True).start()
+
+    def start(self):
+        if not self.running:
+            self.running = True
+            self._wake.set()
+
+    def stop(self):
+        self.running = False
+
+    def delivered(self):
+        self.pending = False
+
+    def _run(self):
+        k32 = ctypes.windll.kernel32
+        k32.CreateWaitableTimerExW.restype = wintypes.HANDLE
+        k32.CreateWaitableTimerExW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+        k32.SetWaitableTimer.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_longlong), wintypes.LONG,
+                                         ctypes.c_void_p, ctypes.c_void_p, wintypes.BOOL]
+        k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        # CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (Windows 10 1803+); plain timer otherwise
+        timer = (k32.CreateWaitableTimerExW(None, None, 0x2, 0x1F0003) or
+                 k32.CreateWaitableTimerExW(None, None, 0x0, 0x1F0003))
+        post = ctypes.windll.user32.PostMessageW
+        post.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        deadline = time.perf_counter()
+        while True:
+            if not self.running:
+                self._wake.wait()
+                self._wake.clear()
+                deadline = time.perf_counter()
+                continue
+            deadline += self.period
+            delay = deadline - time.perf_counter()
+            if delay < -self.period:     # fell far behind (sleep/resume, long frame): resync
+                deadline = time.perf_counter()
+            elif delay > 0:
+                if timer:
+                    due = ctypes.c_longlong(-int(delay * 1e7))
+                    k32.SetWaitableTimer(timer, ctypes.byref(due), 0, None, None, False)
+                    k32.WaitForSingleObject(timer, 1000)
+                else:
+                    time.sleep(delay)
+            if self.running and not self.pending:
+                self.pending = True
+                if not post(self.hwnd, WM_TIMER, 1, 0):
+                    self.pending = False
 
 # Bubble bodies are intentionally clean glass.  Their hit rectangles remain
 # active, but the hover lens would add a second frosted circle over the SDF
@@ -303,7 +401,9 @@ def cursor_pos():
 
 def work_area_at(x, y):
     mi = MONITORINFO(ctypes.sizeof(MONITORINFO))
-    user32.GetMonitorInfoW(user32.MonitorFromPoint(wintypes.POINT(x, y), 2), ctypes.byref(mi))
+    # positions can be fractional after a spring-driven move; POINT needs integers
+    point = wintypes.POINT(int(round(x)), int(round(y)))
+    user32.GetMonitorInfoW(user32.MonitorFromPoint(point, 2), ctypes.byref(mi))
     return mi.rcWork, mi.rcMonitor
 
 
@@ -576,6 +676,7 @@ class Panel:
         self.sound_menu = False      # physical output destinations
         self.hardware_view = "card"
         self.sound_view = "card"
+        self.sound_tab = "effects"   # Effects | Equalizer on the Sound card
         self.settings_view = "card"
         # SmallBlob offers two strip orientations plus the compact Bubble state.
         self.gaming_view = "horizontal"
@@ -959,13 +1060,13 @@ class Panel:
             x += sw
         self.controls.append(("seg", prefix, box, segs, sel, alpha))
 
-    def slider(self, key, value, x0, x1, cy):
+    def slider(self, key, value, x0, x1, cy, hit_h=18):
         S = self.S
         th = 6 * S
         self.static((x0, cy - th / 2, x1, cy + th / 2), th / 2, strength=2 * S, bevel=3 * S, rim=0.4,
                     frost=1.0, lift=0.05)
         self.sliders[key] = (x0, x1)
-        self.rects[f"slider:{key}"] = (x0 - 14 * S, cy - 18 * S, x1 + 14 * S, cy + 18 * S)
+        self.rects[f"slider:{key}"] = (x0 - 14 * S, cy - hit_h * S, x1 + 14 * S, cy + hit_h * S)
         self.controls.append(("slider", key, x0, x1, cy, max(0.0, min(1.0, value))))
 
     def toggle(self, key, on, x0, y0):
@@ -1048,11 +1149,21 @@ class Panel:
             self._gaming(s)
             return self.ink, self.accent, self.controls
         focus_art = self.page == "music" and self.music_view in ("art", "bubble")
-        if not focus_art:
-            # The switcher sits at the bottom of a bottom-anchored pane, so it
-            # never moves between ordinary views. Expanded artwork owns the
-            # whole surface and provides its own contextual collapse control.
+        # While only the page switcher animates, reuse the page drawn last time
+        # and redraw just the switcher on top: a full Music/Settings redraw
+        # (~10 ms) at 30 Hz is what made the tab bar stutter.
+        content_key = (self.page, H, self.w, self.compact, self.music_view, self.sound_view,
+                       getattr(self, "sound_tab", None), self.anchor_side, id(self.f))
+        cached = getattr(self, "_switch_base", None)
+        if (getattr(self, "switcher_only", False) and not focus_art and cached is not None
+                and cached[0] == content_key):
+            _, ink, accent, pic, controls, rects, sliders, layer, palette = cached
+            self.ink, self.accent, self.pic = ink.copy(), accent.copy(), pic  # switcher never paints pic
+            self.di, self.da = ImageDraw.Draw(self.ink), ImageDraw.Draw(self.accent)
+            self.controls, self.rects, self.sliders = list(controls), dict(rects), dict(sliders)
+            self.backdrop_layer, self.backdrop_palette = layer, palette
             self._page_switcher(H)
+            return self.ink, self.accent, self.controls
         top = self.CONTENT * S
         if self.page == "music" and self.backdrop and media is not None and media.art is not None:
             self._backdrop(media.art, H)
@@ -1064,6 +1175,15 @@ class Panel:
             self._music(media, snd, seek, pad, top)
         else:
             (self._blob_compact if self.compact and not self.details_open else self._blob)(s, pad, top)
+        if not focus_art:
+            # The switcher sits at the bottom of a bottom-anchored pane, so it
+            # never moves between ordinary views. Expanded artwork owns the
+            # whole surface and provides its own contextual collapse control.
+            # Drawn last so it is the top layer (and wins hit testing) when open.
+            self._switch_base = (content_key, self.ink.copy(), self.accent.copy(), self.pic.copy(),
+                                 list(self.controls), dict(self.rects), dict(self.sliders),
+                                 self.backdrop_layer, self.backdrop_palette)
+            self._page_switcher(H)
         return self.ink, self.accent, self.controls
 
     def _bubble_restore(self, key):
@@ -1265,7 +1385,20 @@ class Panel:
         return text[:lo].rstrip() + "…"
 
     def wrap(self, text, size, style, max_w):
-        """Wrap without shrinking type, including device names with no spaces."""
+        """Wrap without shrinking type, including device names with no spaces.
+
+        Memoised: the Settings page wraps ~15 paragraphs per redraw (5 ms), which
+        stalled the page switcher's animation."""
+        cache = self.__dict__.setdefault("_wrap_cache", {})
+        key = (text, size, style, round(max_w, 1), id(self.f))
+        hit = cache.get(key)
+        if hit is None:
+            if len(cache) > 512:
+                cache.clear()
+            hit = cache[key] = tuple(self._wrap(text, size, style, max_w))
+        return list(hit)
+
+    def _wrap(self, text, size, style, max_w):
         lines = []
         for paragraph in (text or "").splitlines():
             line = ""
@@ -1395,11 +1528,11 @@ class Panel:
                 angle = math.pi - angle
             # Start inside the body, then stretch out through a liquid neck.
             # Substantial round caps keep the finished pieces plump, not rails.
-            orbit = (22 + 46 * ease) * S
-            thickness = (14 + 3 * ease) * S
-            # Longer curved lobes read as connected blobs instead of fat dots.
-            # Keep a real transparent gap between the thicker pieces.
-            half_angle = math.radians(3 + 5 * ease)
+            orbit = (22 + 44 * ease) * S
+            # Slimmer lobes (26 px instead of 34): the plump version read as heavy
+            # next to the bubble. Slightly longer arcs keep them reading as drops.
+            thickness = (11 + 2 * ease) * S
+            half_angle = math.radians(3 + 7 * ease)
             outer = orbit + thickness
             bounds = (cx - outer, cy - outer, cx + outer, cy + outer)
             self.controls.append(("arc", key, dict(
@@ -2364,15 +2497,37 @@ class Panel:
         self.glass_button("musicutil:options", ax + a - 18 * S, cy, 13 * S, "\uE712", 10,
                           always=self.music_menu == "options")
 
+    def _art_cache(self, key, make):
+        cache = self.__dict__.setdefault("_art_cache_d", {})
+        img = cache.get(key)
+        if img is None:
+            if len(cache) > 64:
+                cache.clear()
+            img = cache[key] = make()
+        return img
+
+    @staticmethod
+    def _cover(art, a, radius):
+        iw, ih = art.size
+        side = min(iw, ih)   # centre-crop wide video thumbnails instead of squashing them
+        img = art.crop(((iw - side) // 2, (ih - side) // 2, (iw + side) // 2, (ih + side) // 2))
+        img = img.resize((a, a), Image.LANCZOS).convert("RGBA")
+        img.putalpha(Image.fromarray((glass.shape_mask(a, a, radius) * 255).astype(np.uint8)))
+        return img
+
+    @staticmethod
+    def _thumb(art, th, rad):
+        img = art.resize((th, th), Image.LANCZOS).convert("RGBA")
+        img.putalpha(Image.fromarray((glass.shape_mask(th, th, rad) * 255).astype(np.uint8)))
+        return img
+
     def _artwork(self, m, ax, ay, a, radius, glyph_size):
         """Album art as a squircle with a glass rim; clicking it opens the artwork view."""
         art = m.art if (m and m.active) else None
         if art is not None:
-            iw, ih = art.size
-            side = min(iw, ih)   # centre-crop wide video thumbnails instead of squashing them
-            img = art.crop(((iw - side) // 2, (ih - side) // 2, (iw + side) // 2, (ih + side) // 2))
-            img = img.resize((a, a), Image.LANCZOS).convert("RGBA")
-            img.putalpha(Image.fromarray((glass.shape_mask(a, a, radius) * 255).astype(np.uint8)))
+            # A LANCZOS resize of the cover costs ~7 ms; redoing it on every redraw (15×/s while
+            # the page switcher animates) was why the tab bar stuttered on the Music page.
+            img = self._art_cache(("cover", id(art), a, round(radius, 2)), lambda: self._cover(art, a, radius))
             self.pic.alpha_composite(img, (ax, ay))
         else:
             self.static((ax, ay, ax + a, ay + a), radius, strength=8 * self.S, bevel=16 * self.S, rim=0.8,
@@ -2457,8 +2612,9 @@ class Panel:
             self.controls.append(("hover", f"result:{i}", row, 13 * S))
             th = round(40 * S)
             if r.get("art") is not None:
-                img = r["art"].resize((th, th), Image.LANCZOS).convert("RGBA")
-                img.putalpha(Image.fromarray((glass.shape_mask(th, th, self.inner_radius(pad, th / 2)) * 255).astype(np.uint8)))
+                rad = self.inner_radius(pad, th / 2)
+                img = self._art_cache(("thumb", id(r["art"]), th, round(rad, 2)),
+                                      lambda art=r["art"], th=th, rad=rad: self._thumb(art, th, rad))
                 self.pic.alpha_composite(img, (round(pad), round(y + 3 * S)))
             elif r.get("kind") == "playlist":
                 self.di.text((pad + th / 2, y + 3 * S + th / 2), "\uE8FD", font=self.f.icon(12), fill=170,
@@ -2492,8 +2648,9 @@ class Panel:
             self.controls.append(("hover", f"queue:{i}", row, 12 * S))
             th = round(32 * S)
             if q.get("art") is not None and self.options.get("queueart", True):
-                img = q["art"].resize((th, th), Image.LANCZOS).convert("RGBA")
-                img.putalpha(Image.fromarray((glass.shape_mask(th, th, self.inner_radius(pad, th / 2)) * 255).astype(np.uint8)))
+                rad = self.inner_radius(pad, th / 2)
+                img = self._art_cache(("thumb", id(q["art"]), th, round(rad, 2)),
+                                      lambda art=q["art"], th=th, rad=rad: self._thumb(art, th, rad))
                 self.pic.alpha_composite(img, (round(pad), round(y + 3 * S)))
             else:
                 self.static((pad, y + 3 * S, pad + th, y + 3 * S + th), self.inner_radius(pad, th / 2),
@@ -2656,13 +2813,28 @@ class Panel:
         L(pad, px(152), "Boost", 14, "Semibold Text", 255)
         L(W - pad, px(152), f"+{snd.boost_db:.1f} dB", 13, "Regular", 175, "ra")
         self.slider("boost", snd.boost, pad + 12 * S, W - pad - 12 * S, px(186))
-        self.segmented("preset", PRESET_ORDER, snd.preset, (pad, px(212), W - pad, px(246)), 12)
-        y = px(266)
-        for key, name in (("bass", "Bass"), ("clarity", "Clarity"), ("surround", "Surround")):
-            L(pad, y, name, 13)
-            L(W - pad, y, f"{round(getattr(snd, key) * 100)}%", 12, "Regular", 140, "ra")
-            self.slider(key, getattr(snd, key), pad + 12 * S, W - pad - 12 * S, y + 30 * S)
-            y += 50 * S
+        self.segmented("preset", PRESET_ORDER, snd.preset, (pad, px(212), W - pad, px(246)), 11)
+        tab = getattr(self, "sound_tab", "effects")
+        self.segmented("stab", [("effects", "Effects"), ("eq", "Equalizer")], tab,
+                       (pad + 40 * S, px(256), W - pad - 40 * S, px(280)), 11)
+        if tab == "eq":
+            # 10 bands in two columns of five; ±12 dB, double-click-free: drag to 0 snaps
+            col_w = (W - 2 * pad - 16 * S) / 2
+            for i, label in enumerate(EQ_LABELS):
+                cx0 = pad + (i // 5) * (col_w + 16 * S)
+                y = px(302 + (i % 5) * 24)
+                db = snd.eq_db(i)
+                L(cx0, y, label, 11, "Semibold Text", 200, "lm")
+                L(cx0 + col_w, y, f"{db:+.0f}" if db else "0", 11, "Regular", 150, "rm")
+                self.slider(f"eq{i}", getattr(snd, f"eq{i}"), cx0 + 34 * S, cx0 + col_w - 30 * S, y,
+                            hit_h=11)
+        else:
+            y = px(292)
+            for key, name in (("bass", "Bass"), ("clarity", "Clarity"), ("surround", "Surround")):
+                L(pad, y, name, 13)
+                L(W - pad, y, f"{round(getattr(snd, key) * 100)}%", 12, "Regular", 140, "ra")
+                self.slider(key, getattr(snd, key), pad + 12 * S, W - pad - 12 * S, y + 24 * S)
+                y += 42 * S
         if snd.cable is False:
             bx = (W - pad - 126 * S, px(414), W - pad, px(444))
             self.rects["setupaudio"] = bx
@@ -2944,20 +3116,22 @@ class App:
         self.panel.hotkey_label = DUAL_CONTROL_LABEL
         self.startup = startup_enabled()
         self.springs = Springs()
-        self.springs.get("width", self.panel.w, k=240, zeta=0.90)
+        self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
+        # created here so no later default-parameter get() can make height move differently
+        self.springs.get("height", self.panel.height(None), k=LAYOUT_K, zeta=LAYOUT_Z)
         self.springs.get(
             "hardware_morph",
             1.0 if (self.panel.hardware_view == "bubble" or
                     (self.panel.page == "gaming" and self.panel.gaming_view == "bubble")) else 0.0,
-                         k=220, zeta=0.86)
+                         k=LAYOUT_K, zeta=LAYOUT_Z)
         self.springs.get("music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
-                         k=220, zeta=0.86)
+                         k=LAYOUT_K, zeta=LAYOUT_Z)
         self.springs.get("sound_morph", 1.0 if (self.panel.page == "sound" and
                                                  self.panel.sound_view == "bubble") else 0.0,
-                                                 k=220, zeta=0.86)
+                                                 k=LAYOUT_K, zeta=LAYOUT_Z)
         self.springs.get("settings_morph", 1.0 if (self.panel.page == "settings" and
                                                     self.panel.settings_view == "bubble") else 0.0,
-                                                    k=220, zeta=0.86)
+                                                    k=LAYOUT_K, zeta=LAYOUT_Z)
         self.springs.get("bubble_proximity", 0.0,
                          k=BUBBLE_PROXIMITY_K, zeta=BUBBLE_PROXIMITY_ZETA)
         self.springs.get("music_bass", 0.0, k=150, zeta=.72)
@@ -3048,6 +3222,7 @@ class App:
                                            0, 0, 10, 10, None, None, hinst, None)
         if isinstance(self.hwnd, int) and self.hwnd:
             shell32.DragAcceptFiles(self.hwnd, True)
+        self.pacer = FramePacer(self.hwnd) if self.hwnd else None
         # keep our own pixels out of the background grab (otherwise the glass refracts itself)
         user32.SetWindowDisplayAffinity(self.hwnd, 0 if self.captureable else 0x11)
         self.glass.dump_path = os.environ.get("BLOB_DUMP")
@@ -3078,7 +3253,6 @@ class App:
         self.icon.run_detached()
         user32.SetTimer(self.hwnd, 2, 1000, None)  # data / tray refresh
         if "--startup" not in sys.argv:
-            time.sleep(1.2)
             self.show()
 
     # ── content ──
@@ -3178,6 +3352,16 @@ class App:
         x_high = work.right - (panel_x + width + guard)
         y_low = work.top - (panel_y - guard)
         y_high = work.bottom - (panel_y + height + guard)
+        if getattr(self, "bubble_mode", False) and hasattr(self.panel, "bubble_main_box"):
+            # A MiniBlob may hug the screen edge: clamp its glass body, not the canvas
+            # around it. The soft shadow may leave the screen and the restore satellite
+            # stays half visible (and clickable) on the edge.
+            bx0, by0, bx1, by1 = (v / self.ss for v in self.panel.bubble_main_box())
+            edge = float(max(2, round(2 * float(self.S))))
+            x_low = work.left - (panel_x + bx0 - edge)
+            x_high = work.right - (panel_x + bx1 + edge)
+            y_low = work.top - (panel_y + by0 - edge - 12 * float(self.S))
+            y_high = work.bottom - (panel_y + by1 + edge)
         old = tuple(self.pos)
         if x_low <= x_high:
             self.pos[0] = min(max(self.pos[0], x_low), x_high)
@@ -3293,14 +3477,16 @@ class App:
                 outgoing = [c for c in outgoing if c[0] != "arc"]
             self.old_controls = outgoing
             self.glass.set_content(ink, accent, pic, backdrop)
-            fade = self.springs.get("fade", 1.0, k=260, zeta=1.0)
+            fade = self.springs.get("fade", 1.0, k=FADE_K, zeta=FADE_Z)
             fade.x, fade.v, fade.target = 0.0, 0.0, 1.0
         else:
-            self.glass.replace_content(ink, accent, pic, backdrop)
+            # a switcher-only redraw reuses the page's picture layer untouched
+            self.glass.replace_content(ink, accent, pic, backdrop,
+                                       same_pic=bool(getattr(self.panel, "switcher_only", False)))
         self.controls = controls
-        h = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=0.86)
+        h = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
         h.target = self.panel.height(self.snap)
-        w = self.springs.get("width", self.panel.w, k=240, zeta=0.90)
+        w = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
         w.target = self.panel.w
         self.frame_dirty = True
 
@@ -3458,11 +3644,11 @@ class App:
         # Seed every dimension from the currently visible geometry before changing
         # the layout target. This turns the card/bubble switch into one continuous
         # spring motion instead of constructing the destination at full size.
-        width = self.springs.get("width", self.panel.w, k=240, zeta=0.90)
-        height = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=0.86)
+        width = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
+        height = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
         morph = self.springs.get(
             "hardware_morph", 1.0 if self.panel.hardware_view == "bubble" else 0.0,
-            k=220, zeta=0.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         # Keep the three geometric channels phase-aligned; otherwise the panel
         # briefly looks merely resized before its outline catches up.
         for spring in (width, height, morph):
@@ -3486,11 +3672,11 @@ class App:
         """Select the compact Sound bubble without changing the audio state."""
         if view not in ("card", "bubble") or view == self.panel.sound_view:
             return
-        width = self.springs.get("width", self.panel.w, k=240, zeta=.90)
-        height = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=.86)
+        width = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
+        height = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
         morph = self.springs.get(
             "sound_morph", 1.0 if self.panel.sound_view == "bubble" else 0.0,
-            k=220, zeta=.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         if view == "bubble":
             self.sound_top = self.glass.panel_y(round(height.x / self.ss))
         cfg = engine.load_config()
@@ -3513,11 +3699,11 @@ class App:
         """Give Settings the same card-to-bubble transition as every other page."""
         if view not in ("card", "bubble") or view == self.panel.settings_view:
             return
-        width = self.springs.get("width", self.panel.w, k=240, zeta=.90)
-        height = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=.86)
+        width = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
+        height = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
         morph = self.springs.get(
             "settings_morph", 1.0 if self.panel.settings_view == "bubble" else 0.0,
-            k=220, zeta=.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         if view == "bubble":
             self.settings_top = self.glass.panel_y(round(height.x / self.ss))
         self.panel.settings_view = view
@@ -3631,11 +3817,11 @@ class App:
         on_gaming = self.panel.page == "gaming"
         width = height = morph = None
         if on_gaming:
-            width = self.springs.get("width", self.panel.w, k=240, zeta=0.90)
-            height = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=0.86)
+            width = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
+            height = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
             morph = self.springs.get(
                 "hardware_morph", 1.0 if old == "bubble" else 0.0,
-                k=220, zeta=0.86)
+                k=LAYOUT_K, zeta=LAYOUT_Z)
             if view == "bubble" and old != "bubble":
                 # Measure the active strip, not the Settings page.
                 self.gaming_top = self.gaming_anchor()
@@ -3717,11 +3903,11 @@ class App:
     def set_music_view(self, view):
         if view not in ("now", "art", "search", "queue", "bubble") or view == self.panel.music_view:
             return
-        width = self.springs.get("width", self.panel.w, k=240, zeta=.90)
-        height = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=.86)
+        width = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
+        height = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
         morph = self.springs.get(
             "music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
-            k=220, zeta=.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         if view == "bubble":
             self.music_top = self.glass.panel_y(round(height.x / self.ss))
         if view in ("now", "bubble"):
@@ -4202,6 +4388,8 @@ class App:
         proximity = self.springs.get("bubble_proximity", 0.0)
         proximity.x = proximity.v = proximity.target = 0.0
         user32.KillTimer(self.hwnd, 1)
+        if getattr(self, "pacer", None):
+            self.pacer.stop()
         self.interval = 0
         user32.ShowWindow(self.hwnd, 0)
         self.visible = False
@@ -4214,7 +4402,10 @@ class App:
         want = 16
         if want != self.interval:
             self.interval = want
-            user32.SetTimer(self.hwnd, 1, want, None)
+            if getattr(self, "pacer", None):
+                self.pacer.start()
+            else:
+                user32.SetTimer(self.hwnd, 1, want, None)
 
     def _sync_tabs_texture(self, now, tabs):
         """Coalesce full texture rerasterization while the tab spring is moving."""
@@ -4240,8 +4431,8 @@ class App:
             elif kind == "arc":
                 _, key, geometry = c
                 L = dict(geometry)
-                hover = sp.get(prefix + "arc:hover:" + key, 0.0, k=420, zeta=.92)
-                press = sp.get(prefix + "arc:press:" + key, 0.0, k=450, zeta=.8)
+                hover = sp.get(prefix + "arc:hover:" + key, 0.0, k=HOVER_K, zeta=HOVER_Z)
+                press = sp.get(prefix + "arc:press:" + key, 0.0, k=PRESS_K, zeta=PRESS_Z)
                 hover.target = float(not prefix and self.hover == key)
                 press.target = float(not prefix and self.pressed == key)
                 # The palette uses the same pull-and-settle language as the
@@ -4291,7 +4482,7 @@ class App:
                     # surface.  Do not stack the generic frosted hover lens
                     # on top of it; the rectangle remains a live hit target.
                     continue
-                h = sp.get(prefix + "hover:" + key, 0.0, k=420, zeta=1.0)
+                h = sp.get(prefix + "hover:" + key, 0.0, k=HOVER_K, zeta=HOVER_Z)
                 live = (self.attached == key) if self.pointer_style != "system" else (self.hover == key)
                 h.target = 1.0 if live and not prefix else 0.0
                 a = h.x * presence
@@ -4307,12 +4498,12 @@ class App:
                 seg_alpha = c[5] if len(c) > 5 else 1.0
                 inset = 3 * S
                 a0, a1 = segs[sel]
-                cx = sp.get(prefix + "segx:" + key, (a0 + a1) / 2, k=330, zeta=0.62)
-                wd = sp.get(prefix + "segw:" + key, a1 - a0, k=330, zeta=0.7)
+                cx = sp.get(prefix + "segx:" + key, (a0 + a1) / 2, k=CONTROL_K, zeta=CONTROL_Z)
+                wd = sp.get(prefix + "segw:" + key, a1 - a0, k=CONTROL_K, zeta=CONTROL_Z)
                 cx.target, wd.target = (a0 + a1) / 2, a1 - a0
                 m = min(1.0, abs(cx.v) / (700 * S))                 # how fast it's gliding
                 stretch = min(0.5, abs(cx.v) / (1300 * S))
-                press = sp.get(prefix + "segp:" + key, 0.0, k=500, zeta=0.6)
+                press = sp.get(prefix + "segp:" + key, 0.0, k=PRESS_K, zeta=PRESS_Z)
                 press.target = 1.0 if self.pressed and self.pressed.startswith(key + ":") else 0.0
                 half_w = (wd.x - 2 * inset) / 2 * (1 + stretch) * (1 + 0.06 * press.x)
                 half_h = ((ty1 - ty0) / 2 - inset) * (1 - 0.3 * stretch) * (1 + 0.12 * press.x)
@@ -4327,7 +4518,7 @@ class App:
                 live = self.sound_value(key) if self.slider_drag == key else value
                 kx = sp.get(prefix + "sx:" + key, x0 + (x1 - x0) * live, k=1100, zeta=0.72)
                 kx.target = x0 + (x1 - x0) * live
-                press = sp.get(prefix + "sp:" + key, 0.0, k=420, zeta=0.55)
+                press = sp.get(prefix + "sp:" + key, 0.0, k=PRESS_K, zeta=PRESS_Z)
                 press.target = 1.0 if self.slider_drag == key else 0.3 if self.hover == "slider:" + key else 0.0
                 p = press.x
                 stretch = min(0.4, abs(kx.v) / (2400 * S))
@@ -4343,9 +4534,9 @@ class App:
                     out.append(L)
             elif kind == "toggle":
                 _, key, (x0, y0, x1, y1), on = c
-                pos = sp.get(prefix + "tp:" + key, 1.0 if on else 0.0, k=280, zeta=0.52)
+                pos = sp.get(prefix + "tp:" + key, 1.0 if on else 0.0, k=CONTROL_K, zeta=CONTROL_Z)
                 pos.target = 1.0 if on else 0.0
-                press = sp.get(prefix + "tq:" + key, 0.0, k=500, zeta=0.6)
+                press = sp.get(prefix + "tq:" + key, 0.0, k=PRESS_K, zeta=PRESS_Z)
                 press.target = 1.0 if self.pressed == "toggle:" + key else 0.35 if self.hover == "toggle:" + key else 0.0
                 h = y1 - y0
                 g = max(0.0, min(1.0, pos.x))
@@ -4390,22 +4581,45 @@ class App:
         return getattr(self.sound, key)
 
     # ── drawing ──
+    # springs that follow the music continuously; they never "settle"
+    AUDIO_SPRINGS = frozenset({"music_bass", "music_mid", "music_treble"})
+
+    def _layout_animating(self):
+        if getattr(self, "drag", None) or getattr(self, "slider_drag", None):
+            return True
+        return any(s.moving for k, s in self.springs.items() if k not in self.AUDIO_SPRINGS)
+
+    def _flush_tick_redraw(self):
+        if getattr(self, "_tick_redraw", False) and self.visible and not self._layout_animating():
+            self._tick_redraw = False
+            self.draw_content()
+            self.frame_dirty = True
+
     def frame(self):
         t0 = time.perf_counter()
         self._frame()
+        self._flush_tick_redraw()
         if PROFILE:
             PROFILE.setdefault("frame", []).append(time.perf_counter() - t0)
+            prev = PROFILE.get("_prev")
+            PROFILE["_prev"] = t0
+            if prev and t0 - prev < 0.5:
+                PROFILE.setdefault("interval", []).append(t0 - prev)
             for k, v in getattr(self.glass, "stats", {}).items():
                 PROFILE.setdefault(k, []).append(v)
             self.glass.stats = {}
             if time.time() - PROFILE.setdefault("_t", time.time()) > 5:
                 PROFILE["_t"] = time.time()
                 parts = {k: (1000 * sum(v) / len(v), 1000 * max(v), len(v)) for k, v in PROFILE.items()
-                         if k != "_t" and v}
+                         if not k.startswith("_") and v}
+                iv = PROFILE.get("interval") or []
+                if iv:
+                    parts["late>20ms"] = (100.0 * sum(1 for d in iv if d > 0.020) / len(iv), 0.0, len(iv))
                 engine.log("profile " + ", ".join(f"{k}: avg {a:.1f}ms max {m:.1f}ms n={n}" for k, (a, m, n)
                                                     in parts.items()))
                 for k in parts:
                     PROFILE[k] = []
+                PROFILE.pop("late>20ms", None)
 
     def _frame(self):
         now = time.perf_counter()
@@ -4434,33 +4648,33 @@ class App:
         magnifier_zoom = self.springs.get("magnifier_zoom", 1.0, k=190, zeta=.95)
         magnifier_zoom.target = self.panel.magnifier_zoom if self.panel.magnifier_active else 1.0
         fade = self.springs.get("fade", 1.0).x
-        width = self.springs.get("width", self.panel.w, k=240, zeta=0.90)
+        width = self.springs.get("width", self.panel.w, k=LAYOUT_K, zeta=LAYOUT_Z)
         width.target = self.panel.w
         morph = self.springs.get(
             "hardware_morph",
             1.0 if (not self.panel.tools_open and
                     (self.panel.hardware_view == "bubble" or
                      (self.panel.page == "gaming" and self.panel.gaming_view == "bubble"))) else 0.0,
-            k=220, zeta=0.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         morph.target = 1.0 if ((self.panel.page == "blob" and self.panel.hardware_view == "bubble") or
                               (self.panel.page == "gaming" and self.panel.gaming_view == "bubble")) \
             and not self.panel.tools_open else 0.0
         music_morph = self.springs.get(
             "music_morph", 1.0 if self.panel.music_view == "bubble" else 0.0,
-            k=220, zeta=.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         music_morph.target = 1.0 if self.panel.page == "music" and self.panel.music_view == "bubble" \
             and not self.panel.tools_open else 0.0
         sound_morph = self.springs.get(
             "sound_morph", 1.0 if (self.panel.page == "sound" and
                                      self.panel.sound_view == "bubble") else 0.0,
-            k=220, zeta=.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         sound_morph.target = 1.0 if (self.panel.page == "sound" and
                                      self.panel.sound_view == "bubble" and
                                      not self.panel.tools_open) else 0.0
         settings_morph = self.springs.get(
             "settings_morph", 1.0 if (self.panel.page == "settings" and
                                         self.panel.settings_view == "bubble") else 0.0,
-            k=220, zeta=.86)
+            k=LAYOUT_K, zeta=LAYOUT_Z)
         settings_morph.target = 1.0 if (self.panel.page == "settings" and
                                         self.panel.settings_view == "bubble" and
                                         not self.panel.tools_open) else 0.0
@@ -4481,7 +4695,7 @@ class App:
                 # bubble never stretches or slides during the handoff.
                 width.x = width.target = self.panel.w
                 width.v = 0.0
-                height = self.springs.get("height", self.panel.height(self.snap), k=320, zeta=.86)
+                height = self.springs.get("height", self.panel.height(self.snap), k=LAYOUT_K, zeta=LAYOUT_Z)
                 height.x = height.target = self.panel.height(self.snap)
                 height.v = 0.0
             self.draw_content()
@@ -4513,10 +4727,14 @@ class App:
             bass.target, mid.target, treble.target = self.audio_motion.update(levels, dt)
         else:
             bass.target, mid.target, treble.target = self.audio_motion.update((0, 0, 0), dt)
-        tabs = self.springs.get("tabs", 0.0, k=300, zeta=0.85)
+        tabs = self.springs.get("tabs", 0.0, k=300, zeta=LAYOUT_Z)
         tabs.target = 1.0 if self.panel.tabs_open else 0.0
         if self._sync_tabs_texture(now, tabs):
-            self.draw_content()
+            self.panel.switcher_only = True
+            try:
+                self.draw_content()
+            finally:
+                self.panel.switcher_only = False
         if self.panel.page == "music" and self.panel.music_view == "queue" and now - self.last_queue > 10:
             self.last_queue = now
             self.am.refresh_queue()
@@ -4553,7 +4771,8 @@ class App:
                              not self.panel.tools_open and
                              self.panel.music_view not in ("art", "bubble") and
                              getattr(self.media, "art", None) is not None)
-        animating = self.springs.moving or self.drag is not None or bool(self.slider_drag)             or abs(self.vel).max() > 0.5
+        animating = (self.springs.moving or self.drag is not None or bool(self.slider_drag)
+                     or abs(self.vel).max() > 0.5 or getattr(self.glass, "ink_animating", False))
         # Poll the desktop on its own cadence. Animation can render the cached
         # glass scene every frame instead of forcing a full capture/upload.
         panel_h = self.springs["height"].x / self.ss
@@ -5006,6 +5225,9 @@ class App:
             crossfade = True
         elif kind == "preset":
             self.sound.set_preset(key)
+        elif kind == "stab":
+            self.panel.sound_tab = key
+            crossfade = True
         elif kind == "mview":
             if key == "bubble":
                 self.prepare_minimize_anchor(x)
@@ -5321,8 +5543,11 @@ class App:
                     return 0  # ignore any mouse messages queued before locking
             if msg == 0x21 and self.panel.page == "gaming":  # WM_MOUSEACTIVATE
                 return 3  # MA_NOACTIVATE: dragging the strip must not steal the game's focus
-            if msg == WM_TIMER and wp == 1 and self.visible:
-                self.frame()
+            if msg == WM_TIMER and wp == 1:
+                if getattr(self, "pacer", None):
+                    self.pacer.delivered()
+                if self.visible:
+                    self.frame()
                 return 0
             if msg == WM_TIMER and wp == 2:
                 self.tick()
@@ -5650,6 +5875,26 @@ class App:
         if PROFILE:
             PROFILE.setdefault("tick", []).append(time.perf_counter() - t0)
 
+    def _set_tray_temp(self, t):
+        """pystray writes an .ico to disk for every icon change (~11 ms): keep it off the UI thread."""
+        self._tray_temp = t
+        if getattr(self, "_tray_busy", False):
+            return  # the running update picks up the newest value
+        self._tray_busy = True
+
+        def work():
+            try:
+                while True:
+                    want = self._tray_temp
+                    self.icon.icon = tray_image(want)
+                    if self._tray_temp == want:
+                        break
+            except Exception:
+                pass
+            finally:
+                self._tray_busy = False
+        threading.Thread(target=work, name="TrayIcon", daemon=True).start()
+
     def _tick(self):
         self._maybe_end_capture()
         self.maintain_gaming_topmost()  # 1 Hz, not part of rendering or capture
@@ -5661,7 +5906,7 @@ class App:
             return
         t = s["cpu"]["temp"]
         if not self.snap or t != self.snap["cpu"]["temp"]:
-            self.icon.icon = tray_image(t)
+            self._set_tray_temp(t)
         g = s["gpu"]
         fans = " / ".join(f"{f['rpm']:,}" if f["rpm"] is not None else "–" for f in s["fans"])
         gpu_txt = "asleep" if g["state"] == "sleeping" else fmt_temp(g["temp"]) + "C"
@@ -5669,8 +5914,11 @@ class App:
         self.icon.title = f"CPU {fmt_temp(t)}C · GPU {gpu_txt}{fan_txt}"[:127]
         self.snap = s
         if self.visible and not self.slider_drag and self.springs.get("fade", 1.0).x >= 0.999:
-            self.draw_content()
-            self.frame()
+            # Re-rasterising the live text costs ~10 ms. Doing it (plus an extra
+            # synchronous frame) mid-animation was the once-a-second hitch, so
+            # wait until the motion settles; frame() picks it up then.
+            self._tick_redraw = True
+            self._flush_tick_redraw()
 
     # ── screenshots ──
     # To refract live, the panel hides itself from screen capture. When a screenshot shortcut is

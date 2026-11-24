@@ -16,24 +16,34 @@ import numpy as np
 import psutil
 
 import engine as core
-from audio_engine import (BASS, BOOST, CLARITY, ENABLED, EQ0, HEARTBEAT, LEVEL, N_BANDS, QUIT,
-                          SPEC0, STATUS, SURROUND, VERSION, VOLUME)
+from audio_engine import (BASS, BOOST, CLARITY, ENABLED, EQ0, HEARTBEAT, LEVEL, MAX_BOOST_DB, N_BANDS,
+                          QUIT, SPEC0, STATUS, SURROUND, VERSION, VOLUME)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CABLE_IN = "CABLE Input (VB-Audio Virtual Cable)"
 VIRTUAL = ("CABLE", "VB-Audio", "FxSound")
 FXSOUND_SETTINGS = os.path.join(os.environ.get("APPDATA", ""), "FxSound", "FxSound.settings")
 
+# Each preset is a full recipe: 10-band EQ (dB) plus the three effects (0..1), so picking
+# one is clearly audible. Editing any EQ band or effect switches to "custom", which keeps
+# your own settings until you pick a preset again.
+EQ_LABELS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+EQ_RANGE_DB = 12.0
 PRESETS = {
-    #            31   62  125  250  500   1k   2k   4k   8k  16k   surround
-    "music":  ([3.0, 2.5, 1.5, 0.0, -0.5, 0.0, 0.5, 1.5, 2.5, 3.0], 0.25),
-    "movies": ([2.5, 2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 2.5, 1.5, 1.0], 0.55),
-    "gaming": ([1.0, 1.0, 0.0, -1.0, 0.0, 1.5, 3.0, 3.5, 2.5, 1.0], 0.40),
-    "voice":  ([-4.0, -3.0, -1.0, 0.0, 1.0, 2.5, 3.0, 2.0, 0.0, -1.0], 0.0),
-    "flat":   ([0.0] * 10, 0.0),
+    #            31   62  125  250  500   1k   2k   4k   8k  16k
+    "music":  {"eq": [4.0, 3.5, 2.0, 0.0, -1.0, 0.0, 1.0, 2.5, 3.5, 4.0],
+               "bass": 0.55, "clarity": 0.45, "surround": 0.30},
+    "movies": {"eq": [3.0, 3.0, 1.5, 0.0, 0.0, 1.5, 3.0, 3.0, 2.0, 1.0],
+               "bass": 0.50, "clarity": 0.35, "surround": 0.65},
+    "gaming": {"eq": [1.0, 1.0, 0.0, -1.5, 0.0, 2.0, 4.0, 4.5, 3.0, 1.0],
+               "bass": 0.30, "clarity": 0.60, "surround": 0.50},
+    "voice":  {"eq": [-6.0, -5.0, -2.0, 0.0, 1.5, 3.0, 4.0, 3.0, 0.0, -2.0],
+               "bass": 0.0, "clarity": 0.55, "surround": 0.0},
+    "flat":   {"eq": [0.0] * 10, "bass": 0.0, "clarity": 0.0, "surround": 0.0},
 }
 PRESET_ORDER = [("music", "Music"), ("movies", "Movies"), ("gaming", "Gaming"), ("voice", "Voice"),
-                ("flat", "Flat")]
+                ("flat", "Flat"), ("custom", "Custom")]
+EFFECTS = ("bass", "clarity", "surround")
 
 
 # ─────────────────────────── Windows audio endpoints (worker thread only) ───────────────────────────
@@ -176,8 +186,15 @@ class Sound:
         self.boost = self.cfg.get("boost", 0.5)
         self.bass = self.cfg.get("bass", 0.3)
         self.clarity = self.cfg.get("clarity", 0.3)
-        self.surround = self.cfg.get("surround", PRESETS["music"][1])
+        self.surround = self.cfg.get("surround", PRESETS["music"]["surround"])
         self.preset = self.cfg.get("preset", "music")
+        if self.preset not in PRESETS and self.preset != "custom":
+            self.preset = "music"
+        recipe = PRESETS.get(self.preset, PRESETS["music"])
+        self.eq = self._clean_eq(self.cfg.get("eq"), recipe["eq"])
+        custom = self.cfg.get("custom") if isinstance(self.cfg.get("custom"), dict) else {}
+        self.custom = {"eq": self._clean_eq(custom.get("eq"), self.eq),
+                       **{k: float(custom.get(k, getattr(self, k))) for k in EFFECTS}}
         self.output = self.cfg.get("output")
         self.enabled = False       # what the UI shows (flips instantly)
         self.routed = False        # what Windows is actually doing
@@ -209,32 +226,74 @@ class Sound:
             self.set_enabled(True)
 
     # ── settings ──
+    @staticmethod
+    def _clean_eq(values, fallback):
+        try:
+            vals = [max(-EQ_RANGE_DB, min(EQ_RANGE_DB, float(v))) for v in values]
+            if len(vals) == 10:
+                return vals
+        except (TypeError, ValueError):
+            pass
+        return list(fallback)
+
     def save(self):
         cfg = core.load_config()
         cfg["sound"] = {"boost": self.boost, "bass": self.bass, "clarity": self.clarity, "surround": self.surround,
-                        "preset": self.preset, "output": self.output, "enabled": self.enabled}
+                        "preset": self.preset, "eq": list(self.eq), "custom": self.custom,
+                        "output": self.output, "enabled": self.enabled}
         core.save_config(cfg)
 
     def push(self):
         p = self.p
         p[BOOST], p[BASS], p[CLARITY], p[SURROUND] = self.boost, self.bass, self.clarity, self.surround
-        p[EQ0:EQ0 + 10] = PRESETS[self.preset][0]
+        p[EQ0:EQ0 + 10] = self.eq
         p[ENABLED] = 1.0
         p[VERSION] += 1
 
+    def __getattr__(self, name):
+        # eq0..eq9 as 0..1 slider positions (the UI's sliders read attributes by key)
+        if name.startswith("eq") and name[2:].isdigit() and "eq" in self.__dict__:
+            return (self.eq[int(name[2:])] + EQ_RANGE_DB) / (2 * EQ_RANGE_DB)
+        raise AttributeError(name)
+
+    def eq_db(self, i):
+        return self.eq[i]
+
     def set(self, key, value):
-        setattr(self, key, max(0.0, min(1.0, value)))
+        value = max(0.0, min(1.0, value))
+        if key.startswith("eq") and key[2:].isdigit():
+            db = (value * 2 - 1) * EQ_RANGE_DB
+            if abs(db) < 0.4:   # a gentle detent at 0 dB
+                db = 0.0
+            self.eq[int(key[2:])] = round(db * 2) / 2
+            self._to_custom()
+        else:
+            setattr(self, key, value)
+            if key in EFFECTS:
+                self._to_custom()
         self.push()
 
+    def _to_custom(self):
+        self.preset = "custom"
+        self.custom = {"eq": list(self.eq), **{k: getattr(self, k) for k in EFFECTS}}
+
     def set_preset(self, name):
+        if name == "custom":
+            recipe = self.custom
+        elif name in PRESETS:
+            recipe = PRESETS[name]
+        else:
+            return
         self.preset = name
-        self.surround = PRESETS[name][1]
+        self.eq = list(recipe["eq"])
+        for k in EFFECTS:
+            setattr(self, k, float(recipe[k]))
         self.push()
         self.save()
 
     @property
     def boost_db(self):
-        return 15.0 * self.boost
+        return MAX_BOOST_DB * self.boost
 
     # ── UI-facing actions (all instant; the work happens on the worker) ──
     def set_enabled(self, on):

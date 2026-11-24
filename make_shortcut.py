@@ -1,40 +1,34 @@
-"""One-time setup: builds the app icon and puts a 'Blob' shortcut on the Desktop."""
+"""Puts a 'Blob' shortcut on the Desktop and in the Start menu (opens the app, or brings the
+running one to the front instantly)."""
 import os
 import subprocess
 import sys
 
-from PIL import Image, ImageDraw
-
 here = os.path.dirname(os.path.abspath(__file__))
-ico = os.path.join(here, "blob-glass.ico")
-
-S = 256
-img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-d = ImageDraw.Draw(img)
-d.rounded_rectangle((8, 8, S - 8, S - 8), radius=56, fill=(22, 25, 30, 255))
-d.rounded_rectangle((104, 36, 152, 168), radius=24, outline=(236, 238, 241, 255), width=14)
-d.rounded_rectangle((120, 84, 136, 180), radius=8, fill=(255, 122, 69, 255))
-d.ellipse((90, 150, 166, 226), fill=(255, 122, 69, 255))
-img.save(ico, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+ico = os.path.join(here, "blob.ico")
 
 pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
 target = os.path.join(here, "app.pyw")
 ps = f"""
-$d = [Environment]::GetFolderPath('Desktop')
 $wsh = New-Object -ComObject WScript.Shell
-$oldPath = Join-Path $d 'Blob v5.lnk'
-if (Test-Path -LiteralPath $oldPath) {{
-    $old = $wsh.CreateShortcut($oldPath)
-    if ([IO.Path]::GetFullPath($old.WorkingDirectory) -ieq [IO.Path]::GetFullPath('{here}') -and
-        $old.Arguments -like '*app.pyw*') {{ Remove-Item -LiteralPath $oldPath -Force }}
+$desk = [Environment]::GetFolderPath('Desktop')
+$menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Blob.lnk'
+foreach ($old in 'Blob v5.lnk', 'Blob v6.lnk') {{
+    $oldPath = Join-Path $desk $old
+    if (Test-Path -LiteralPath $oldPath) {{
+        $o = $wsh.CreateShortcut($oldPath)
+        if ($o.Arguments -like '*app.pyw*') {{ Remove-Item -LiteralPath $oldPath -Force }}
+    }}
 }}
-$s = $wsh.CreateShortcut((Join-Path $d 'Blob v6.lnk'))
-$s.TargetPath = '{pythonw}'
-$s.Arguments = '"{target}"'
-$s.WorkingDirectory = '{here}'
-$s.IconLocation = '{ico}'
-$s.Description = 'Blob v6 - SmallBlob and Dashboard in one app (F10 switches views)'
-$s.Save()
+foreach ($path in (Join-Path $desk 'Blob.lnk'), $menu) {{
+    $s = $wsh.CreateShortcut($path)
+    $s.TargetPath = '{pythonw}'
+    $s.Arguments = '"{target}"'
+    $s.WorkingDirectory = '{here}'
+    $s.IconLocation = '{ico},0'
+    $s.Description = 'Blob - SmallBlob and Dashboard (F10 switches views)'
+    $s.Save()
+}}
 """
 subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
-print("Shortcut created on Desktop")
+print("Shortcuts created: Desktop and Start menu")
